@@ -51,7 +51,6 @@ module.exports = {
       { target: 'zip', arch: ['x64', 'arm64'] },
     ],
     category: 'public.app-category.productivity',
-    icon: 'resources/icon.icns',
   },
   dmg: {
     title: '${productName} ${version}',
@@ -66,7 +65,6 @@ module.exports = {
     target: [
       { target: 'nsis', arch: ['x64'] },
     ],
-    icon: 'resources/icon.ico',
   },
   nsis: {
     oneClick: false,
@@ -74,8 +72,6 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: '航班分析工具',
-    installerIcon: 'resources/icon.ico',
-    uninstallerIcon: 'resources/icon.ico',
   },
 
   // ── Linux (optional) ───────────────────────────────────────────────────────
