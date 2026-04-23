@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<style>
+  :root {
+    --ca-red: #E60012;
+    --ca-red-light: #FFF0F0;
+    --navy: #1A2E3F;
+    --text: #1a1a2e;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f9fafb;
+    --green: #15803d;
+    --amber: #b45309;
+    --pink: #FFB6C1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC","Microsoft YaHei",Arial,sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+
+  /* Header */
+  .report-header { background: var(--navy); color: white; padding: 24px 40px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .report-header h1 { font-size: 22px; font-weight: 400; letter-spacing: 0.02em; }
+  .report-header .meta { font-size: 12px; opacity: 0.6; margin-top: 6px; }
+  .ca-badge { background: var(--ca-red); color: white; padding: 4px 14px; border-radius: 20px; font-size: 12px; }
+
+  /* KPI cards */
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; padding: 24px 40px; background: white; border-bottom: 1px solid var(--border); }
+  .kpi { text-align: center; }
+  .kpi-value { font-size: 28px; font-weight: 600; color: var(--navy); }
+  .kpi-value.red { color: var(--ca-red); }
+  .kpi-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Section */
+  .section { padding: 24px 40px; }
+  .section-title { font-size: 14px; font-weight: 600; color: var(--navy); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid var(--ca-red); display: inline-block; }
+
+  /* Matrix table */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: var(--navy); color: white; padding: 9px 12px; text-align: center; white-space: nowrap; font-weight: 500; }
+  th:first-child { text-align: left; min-width: 160px; }
+  td { padding: 8px 12px; text-align: center; border: 1px solid var(--border); }
+  td:first-child { text-align: left; font-weight: 500; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .ca-row td { background: var(--ca-red-light) !important; }
+  .ca-row td:first-child { color: var(--ca-red); font-weight: 700; }
+  .cell-min { background: var(--pink) !important; font-weight: 700; }
+  .direct { color: var(--green); }
+  .transit { color: var(--amber); }
+
+  /* Detail table */
+  .detail-table th, .detail-table td { padding: 7px 10px; white-space: nowrap; }
+  .detail-table { font-size: 11.5px; }
+  .rank-1 { background: #fef3c7 !important; }
+
+  /* Legend */
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 12px; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .dot { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
+  /* Footer */
+  .footer { text-align: center; padding: 20px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 24px; }
+
+  @media print { .section { padding: 16px 20px; } }
+</style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────────────── -->
+<div class="report-header">
+  <div>
+    <h1>{{ title }}</h1>
+    <div class="meta">
+      生成时间：{{ stats.generated_at }} &nbsp;|&nbsp;
+      日期范围：{{ stats.date_range }} &nbsp;|&nbsp;
+      舱位：{{ cabin_label }} &nbsp;|&nbsp;
+      币种：{{ stats.currency }}
+    </div>
+  </div>
+  <span class="ca-badge">国航竞争力分析</span>
+</div>
+
+<!-- ── KPI Cards ─────────────────────────────────────────────────────────────── -->
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-value">{{ stats.total_flights }}</div>
+    <div class="kpi-label">总航班数</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value">{{ stats.total_airlines }}</div>
+    <div class="kpi-label">航司数量</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value">{{ stats.price_min | int }}</div>
+    <div class="kpi-label">市场最低价</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value">{{ stats.price_avg | int }}</div>
+    <div class="kpi-label">市场均价</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value">{{ stats.direct_pct }}%</div>
+    <div class="kpi-label">直飞占比</div>
+  </div>
+  {% if stats.ca_price_avg %}
+  <div class="kpi">
+    <div class="kpi-value red">{{ stats.ca_price_avg | int }}</div>
+    <div class="kpi-label">国航均价</div>
+  </div>
+  {% endif %}
+  {% if stats.ca_index_avg %}
+  <div class="kpi">
+    <div class="kpi-value {% if stats.ca_index_avg > 110 %}red{% endif %}">{{ stats.ca_index_avg }}</div>
+    <div class="kpi-label">国航指数均值</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Comparison Matrix ──────────────────────────────────────────────────────── -->
+<div class="section">
+  <div class="section-title">比价矩阵</div>
+  <table>
+    <thead>
+      <tr>
+        <th>航司 / 日期</th>
+        {% for date in matrix.dates %}
+        <th>{{ date }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for airline in matrix.airlines %}
+      {% set is_ca = matrix.codes.get(airline) == 'CA' %}
+      <tr class="{{ 'ca-row' if is_ca else '' }}">
+        <td>{{ airline }}</td>
+        {% for date in matrix.dates %}
+        {% set d = matrix.cell.get((airline, date)) %}
+        {% if d %}
+          <td class="{{ 'cell-min' if d.is_min else '' }}">
+            <span class="{{ 'direct' if d.is_direct else 'transit' }}">
+              {{ d.price | int }}
+              {% if d.is_direct %}<small>✈直</small>{% else %}<small>↔转</small>{% endif %}
+            </span>
+          </td>
+        {% else %}
+          <td style="color:#ccc;">—</td>
+        {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--pink);"></span>当日最低价</span>
+    <span><span class="dot" style="background:var(--ca-red-light);border:1px solid var(--ca-red);"></span>国航（CA）</span>
+    <span><span style="color:var(--green);font-weight:600;">✈直</span>&nbsp;直飞</span>
+    <span><span style="color:var(--amber);">↔转</span>&nbsp;经停/中转</span>
+    <span>价格单位：{{ stats.currency }}</span>
+  </div>
+</div>
+
+<!-- ── Detailed Data ───────────────────────────────────────────────────────────── -->
+<div class="section">
+  <div class="section-title">详细数据</div>
+  <table class="detail-table">
+    <thead>
+      <tr>
+        <th>日期</th>
+        <th>航司</th>
+        <th>航班号</th>
+        <th>起飞</th>
+        <th>落地</th>
+        <th>时长</th>
+        <th>经停</th>
+        <th>价格</th>
+        <th>市场排名</th>
+        <th>国航指数</th>
+        <th>vs最低价</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in flights %}
+      {% set is_ca = f.airline_code == 'CA' %}
+      <tr class="{{ 'ca-row' if is_ca else '' }} {{ 'rank-1' if f.market_rank == 1 else '' }}">
+        <td>{{ f.departure_date }}</td>
+        <td style="font-weight:{{ '700' if is_ca else '400' }}">{{ f.airline }}</td>
+        <td>{{ f.segments[0].flight_number if f.segments else '—' }}</td>
+        <td>{{ f.segments[0].departure_time if f.segments else '—' }}</td>
+        <td>{{ f.segments[0].arrival_time if f.segments else '—' }}</td>
+        <td>{{ f.total_duration or '—' }}</td>
+        <td class="{{ 'direct' if f.is_direct else 'transit' }}">{{ '直飞' if f.is_direct else f.stops ~ '次' }}</td>
+        <td style="font-weight:600">{{ f.price | int }}</td>
+        <td>{{ f.market_rank }}</td>
+        <td>{{ f.ca_index if f.ca_index else '—' }}</td>
+        <td>{{ f.vs_min_index if f.vs_min_index else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="footer">
+  由航班价格分析工具生成 &nbsp;|&nbsp; 数据来源：hk.trip.com &nbsp;|&nbsp; {{ stats.generated_at }}
+</div>
+
+</body>
+</html>

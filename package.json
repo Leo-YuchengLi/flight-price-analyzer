@@ -1,0 +1,43 @@
+{
+  "name": "flight-price-analyzer",
+  "version": "0.1.0",
+  "description": "AI-powered flight price analysis desktop app",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "lint": "eslint src --ext .ts,.tsx",
+    "build:backend": "bash scripts/build_backend.sh",
+    "build:backend:win": "scripts\\build_backend_win.bat",
+    "dist:mac": "npm run build:backend && npm run build && electron-builder --mac --config electron-builder.config.js",
+    "dist:win": "npm run build:backend:win && npm run build && electron-builder --win --config electron-builder.config.js",
+    "dist:all": "npm run build:backend && npm run build && electron-builder --mac --win --config electron-builder.config.js"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@types/react-router-dom": "^5.3.3",
+    "electron-store": "^8.2.0",
+    "react-router-dom": "^7.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.7",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

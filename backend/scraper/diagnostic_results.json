@@ -1,0 +1,276 @@
+{
+  "bot_sannysoft": {
+    "rows": [
+      {
+        "test": "Test Name",
+        "result": "Result",
+        "pass": true
+      },
+      {
+        "test": "User Agent\n(Old)",
+        "result": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "pass": true
+      },
+      {
+        "test": "WebDriver\n(New)",
+        "result": "present (failed)",
+        "pass": false
+      },
+      {
+        "test": "WebDriver Advanced",
+        "result": "passed",
+        "pass": true
+      },
+      {
+        "test": "Chrome\n(New)",
+        "result": "present (passed)",
+        "pass": true
+      },
+      {
+        "test": "Permissions\n(New)",
+        "result": "prompt",
+        "pass": true
+      },
+      {
+        "test": "Plugins Length\n(Old)",
+        "result": "5",
+        "pass": true
+      },
+      {
+        "test": "Plugins is of type PluginArray",
+        "result": "passed",
+        "pass": true
+      },
+      {
+        "test": "Languages\n(Old)",
+        "result": "en-HK",
+        "pass": true
+      },
+      {
+        "test": "WebGL Vendor",
+        "result": "Google Inc. (Intel)",
+        "pass": true
+      },
+      {
+        "test": "WebGL Renderer",
+        "result": "ANGLE (Intel, ANGLE Metal Renderer: Intel(R) Iris(TM) Plus Graphics 640, Unspecified Version)",
+        "pass": true
+      },
+      {
+        "test": "Broken Image Dimensions",
+        "result": "16x16",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_UA",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_PROPERTIES",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_ETSL",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_LANGUAGE",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_WEBSOCKET",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "MQ_SCREEN",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_OVERFLOW",
+        "result": "ok",
+        "pass": true
+      },
+      {
+        "test": "PHANTOM_WINDOW_HEIGHT",
+        "result": "ok",
+        "pass": true
+      }
+    ],
+    "failed_count": 0,
+    "failed_tests": []
+  },
+  "sources": [
+    {
+      "name": "hk.trip.com flights",
+      "url": "https://hk.trip.com/flights/",
+      "status": "accessible",
+      "final_url": "https://hk.trip.com/flights/",
+      "blocked": false,
+      "title": "平機票、機票優惠及廉價航班預訂優惠 | Trip.com",
+      "fingerprint": {
+        "webdriver": true,
+        "plugins": 5,
+        "languages": [
+          "en-HK"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/",
+        "chromeRuntime": false,
+        "outerWidth": 1402,
+        "outerHeight": 804,
+        "innerWidth": 1400,
+        "innerHeight": 900,
+        "deviceMemory": 8,
+        "hardwareConcurrency": 2
+      }
+    },
+    {
+      "name": "www.trip.com flights",
+      "url": "https://www.trip.com/flights/",
+      "status": "accessible",
+      "final_url": "https://www.trip.com/flights/",
+      "blocked": false,
+      "title": "Cheap Flights, Airline Tickets & Plane Tickets | Trip.com",
+      "fingerprint": {
+        "webdriver": true,
+        "plugins": 5,
+        "languages": [
+          "en-HK"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/",
+        "chromeRuntime": false,
+        "outerWidth": 1402,
+        "outerHeight": 804,
+        "innerWidth": 1400,
+        "innerHeight": 900,
+        "deviceMemory": 8,
+        "hardwareConcurrency": 2
+      }
+    },
+    {
+      "name": "Skyscanner LON-BJS",
+      "url": "https://www.skyscanner.net/transport/flights/lon/bjsp/260615/",
+      "status": "blocked",
+      "final_url": "https://www.skyscanner.net/sttc/px/captcha-v2/index.html?url=L3RyYW5zcG9ydC9mbGlnaHRzL2xvbi9ianNwLzI2MDYxNS8/&uuid=d4c9f01c-3de0-11f1-b96e-d4a1b24211fe&vid=",
+      "blocked": true,
+      "title": "Skyscanner",
+      "fingerprint": {
+        "webdriver": true,
+        "plugins": 5,
+        "languages": [
+          "en-HK"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/",
+        "chromeRuntime": false,
+        "outerWidth": 1402,
+        "outerHeight": 804,
+        "innerWidth": 1400,
+        "innerHeight": 900,
+        "deviceMemory": 8,
+        "hardwareConcurrency": 2
+      }
+    }
+  ],
+  "hk_form_test": {
+    "flights_captured": 0,
+    "api_url": "",
+    "status": "form_loaded",
+    "form_info": {
+      "inputs": [
+        {
+          "type": "text",
+          "placeholder": "出發地",
+          "testid": "search_city_from0",
+          "name": "",
+          "id": "",
+          "value": ""
+        },
+        {
+          "type": "text",
+          "placeholder": "目的地",
+          "testid": "search_city_to0",
+          "name": "",
+          "id": "",
+          "value": ""
+        },
+        {
+          "type": "text",
+          "placeholder": "任何日期",
+          "testid": "search_date_depart0",
+          "name": "",
+          "id": "",
+          "value": "4月24日 週五"
+        },
+        {
+          "type": "text",
+          "placeholder": "任何日期",
+          "testid": "search_date_return0",
+          "name": "",
+          "id": "",
+          "value": "4月26日 週日"
+        },
+        {
+          "type": "hidden",
+          "placeholder": "",
+          "testid": null,
+          "name": "",
+          "id": "ab_testing_tracker",
+          "value": "M:24,250730_IBU_OLNOHIDFE:A;M:36,251231_IBU_fhpu:B;"
+        },
+        {
+          "type": "hidden",
+          "placeholder": "",
+          "testid": null,
+          "name": "page_id",
+          "id": "page_id",
+          "value": "10320667453"
+        }
+      ],
+      "searchBtns": [
+        {
+          "text": "更多",
+          "testid": null,
+          "class": "essay-v3-btn"
+        }
+      ],
+      "dateEls": [
+        {
+          "tag": "LI",
+          "testid": null,
+          "class": "m-searchForm__item segment-date flex",
+          "text": ""
+        },
+        {
+          "tag": "INPUT",
+          "testid": "search_date_depart0",
+          "class": "module-input f-14 f-bold color-main placeholder-bl",
+          "text": ""
+        },
+        {
+          "tag": "EM",
+          "testid": null,
+          "class": "rdate-line",
+          "text": ""
+        },
+        {
+          "tag": "INPUT",
+          "testid": "search_date_return0",
+          "class": "module-input f-14 f-bold color-main placeholder-bl",
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "testid": null,
+          "class": "nh_d-dateHeader",
+          "text": "出發日期4月24日 週五回程日期4月26日 週日"
+        }
+      ]
+    },
+    "api_urls": []
+  }
+}

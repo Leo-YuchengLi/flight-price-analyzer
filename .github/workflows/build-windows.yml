@@ -1,0 +1,146 @@
+name: Build Windows Installer
+
+# 触发条件：
+#   - 推送到 main 分支时自动构建
+#   - 手动触发（GitHub 网页上点击 Run workflow）
+#   - 推送 v* 标签时构建并发布 Release（如 git tag v0.1.0 && git push --tags）
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # ── 拉取代码 ────────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Node.js ─────────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── Python ──────────────────────────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── npm 依赖 ────────────────────────────────────────────────────────────
+      - name: Install npm dependencies
+        run: npm install
+
+      # ── Python 环境 ─────────────────────────────────────────────────────────
+      - name: Setup Python venv and install packages
+        run: |
+          python -m venv backend\.venv
+          backend\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
+          backend\.venv\Scripts\pip.exe install -r backend\requirements.txt --quiet
+          backend\.venv\Scripts\pip.exe install pyinstaller --quiet
+        shell: cmd
+
+      # ── 缓存 Playwright Chromium（避免每次重新下载 170MB）──────────────────
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: resources/pw-browsers
+          key: pw-chromium-win-${{ hashFiles('backend/requirements.txt') }}
+
+      - name: Download Playwright Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = "$(Get-Location)\resources\pw-browsers"
+          backend\.venv\Scripts\python.exe -m playwright install chromium
+        shell: pwsh
+
+      # ── 构建 Python 后端（PyInstaller）──────────────────────────────────────
+      - name: Build Python backend
+        run: |
+          call backend\.venv\Scripts\activate.bat
+
+          for /f "delims=" %%i in ('python -c "import playwright, os; print(os.path.dirname(playwright.__file__))"') do set PLAYWRIGHT_PKG=%%i
+          for /f "delims=" %%i in ('python -c "import playwright_stealth, os; print(os.path.dirname(playwright_stealth.__file__))" 2^>nul') do set STEALTH_PKG=%%i
+
+          cd backend
+
+          pyinstaller ^
+            --name backend ^
+            --distpath dist ^
+            --workpath build_tmp ^
+            --noconfirm ^
+            --onedir ^
+            --hidden-import uvicorn.logging ^
+            --hidden-import uvicorn.lifespan.on ^
+            --hidden-import uvicorn.lifespan.off ^
+            --hidden-import uvicorn.protocols.http.auto ^
+            --hidden-import uvicorn.protocols.websockets.auto ^
+            --hidden-import uvicorn.loops.auto ^
+            --hidden-import fastapi ^
+            --hidden-import pydantic ^
+            --hidden-import google.genai ^
+            --hidden-import google.genai.types ^
+            --hidden-import pandas ^
+            --hidden-import openpyxl ^
+            --hidden-import jinja2 ^
+            --hidden-import playwright ^
+            --hidden-import playwright.sync_api ^
+            --hidden-import playwright.async_api ^
+            --hidden-import playwright_stealth ^
+            --add-data "%PLAYWRIGHT_PKG%\driver;playwright\driver" ^
+            --add-data "%STEALTH_PKG%;playwright_stealth" ^
+            --add-data "ai;ai" ^
+            --add-data "api;api" ^
+            --add-data "models;models" ^
+            --add-data "report;report" ^
+            --add-data "scraper;scraper" ^
+            main.py
+
+          cd ..
+          if exist resources\backend rmdir /S /Q resources\backend
+          xcopy /E /I backend\dist\backend resources\backend
+        shell: cmd
+
+      # ── 编译前端 ────────────────────────────────────────────────────────────
+      - name: Build Electron frontend
+        run: npm run build
+
+      # ── 打包 Windows 安装包 ─────────────────────────────────────────────────
+      - name: Package Windows installer
+        run: npx electron-builder --win --config electron-builder.config.js
+        env:
+          # 跳过代码签名（无证书）
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # ── 上传构建产物 ────────────────────────────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ github.sha }}
+          path: release/*.exe
+          retention-days: 30
+
+      # ── 如果是 tag（如 v0.1.0），自动发布 GitHub Release ───────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## 航班价格分析工具 ${{ github.ref_name }}
+
+            ### Windows 安装说明
+            1. 下载 `航班价格分析工具 Setup *.exe`
+            2. 双击安装
+            3. 打开应用，在「设置」页填入 Gemini API Key
+            4. 开始使用
+
+            ### 获取 Gemini API Key
+            前往 https://aistudio.google.com/apikey 免费获取
