@@ -6,6 +6,7 @@ import ReportsPage from './pages/ReportsPage'
 import AnalysisPage from './pages/AnalysisPage'
 import SettingsPage from './pages/SettingsPage'
 import { useBackend } from './hooks/useBackend'
+import { useSearchTask } from './hooks/useSearchTask'
 
 // ── Minimal SVG icons (16×16, stroke-based, no fill) ─────────────────────────
 
@@ -70,6 +71,8 @@ const NAV_ITEMS = [
 function Sidebar() {
   const { status, backendUrl } = useBackend()
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
+  const task = useSearchTask()
+  const taskRunning = task?.running ?? false
 
   useEffect(() => {
     const check = async () => {
@@ -134,8 +137,16 @@ function Sidebar() {
           <NavLink key={item.to} to={item.to} end={item.end} style={linkStyle}>
             {item.icon}
             {item.label}
+            {item.to === '/classic' && taskRunning && (
+              <span style={{
+                marginLeft: 'auto', width: 7, height: 7, borderRadius: '50%',
+                background: '#3b82f6', flexShrink: 0,
+                animation: 'pulse 1.2s ease-in-out infinite',
+              }} />
+            )}
           </NavLink>
         ))}
+        <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}`}</style>
       </div>
 
       {/* ── Settings (pinned to bottom) ── */}

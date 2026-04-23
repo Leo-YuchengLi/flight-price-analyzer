@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useBackend } from '../hooks/useBackend'
+import { searchTaskStore, sharedFlights } from '../hooks/searchTaskStore'
+import { useSearchTask } from '../hooks/useSearchTask'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,6 +165,28 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   const [genRep, setGenRep]         = useState(false)
   const [reportId, setReportId]     = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const task = useSearchTask()
+
+  // On mount: sync local UI to store if a task is already running
+  useEffect(() => {
+    const t = searchTaskStore.get()
+    if (t?.running) {
+      setSearching(true)
+      setProgress(t.progress)
+    } else if (t?.done && t.reportId) {
+      setReportId(t.reportId)
+      setDone(true)
+    }
+  }, [])
+
+  // Keep local progress in sync with store while running
+  useEffect(() => {
+    if (task?.running) { setSearching(true); setProgress(task.progress) }
+    else if (!task?.running && searching && !task) { setSearching(false) }
+    if (task?.reportId && !reportId) setReportId(task.reportId)
+    if (task?.done) setDone(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task])
 
   // Update return date when departure date changes (+7 days default)
   useEffect(() => {
@@ -185,14 +209,25 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   }
 
   async function handleSearch() {
+    if (searchTaskStore.isRunning()) {
+      if (!window.confirm('当前有任务正在执行，是否停止并开始新任务？')) return
+      searchTaskStore.abort()
+    }
+    const label = tripType === 'round_trip'
+      ? `${origin}→${dest} 去程${dateStart} 返程${returnDate}`
+      : `${origin}→${dest} ${dateStart}~${dateEnd}`
     setSearching(true)
     setResultsByKey({})
     setDone(false)
     setReportId(null)
     const dates = tripType === 'round_trip' ? [dateStart] : filtDates
-    setProgress({ msg: '准备中…', cur: 0, total: tripType === 'round_trip' ? 2 : dates.length })
+    const initProgress = { msg: '准备中…', cur: 0, total: tripType === 'round_trip' ? 2 : dates.length }
+    setProgress(initProgress)
     abortRef.current = new AbortController()
+    searchTaskStore.start(label, () => abortRef.current?.abort())
+    searchTaskStore.updateProgress(initProgress)
 
+    const localFlights: FlightResult[] = []
     try {
       const body: Record<string, unknown> = {
         origin, destination: dest, dates, cabin, currency,
@@ -201,9 +236,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
         show_browser: showBrowser,
         dry_run: dryRun,
       }
-      if (tripType === 'round_trip') {
-        body.return_dates = [returnDate]
-      }
+      if (tripType === 'round_trip') body.return_dates = [returnDate]
 
       const res = await fetch(`${backendUrl}/api/search/classic`, {
         method: 'POST',
@@ -224,19 +257,46 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
           if (!line.startsWith('data: ')) continue
           try {
             const evt: SSEEvent = JSON.parse(line.slice(6))
-            if (evt.type === 'progress')
-              setProgress({ msg: evt.message!, cur: evt.current!, total: evt.total! })
-            else if (evt.type === 'result' && evt.flights) {
+            if (evt.type === 'progress') {
+              const p = { msg: evt.message!, cur: evt.current!, total: evt.total! }
+              setProgress(p)
+              searchTaskStore.updateProgress(p)
+            } else if (evt.type === 'result' && evt.flights) {
               const key = evt.leg ? `${evt.date}-${evt.leg}` : evt.date!
               setResultsByKey(p => ({ ...p, [key]: evt.flights! }))
+              localFlights.push(...evt.flights)
+              sharedFlights.push(...evt.flights)
+              searchTaskStore.updateFlightCount(localFlights.length)
+            } else if (evt.type === 'done') {
+              setDone(true)
             }
-            else if (evt.type === 'done') setDone(true)
           } catch { /* ok */ }
         }
       }
     } catch (err: any) { if (err.name !== 'AbortError') console.error(err) }
+
     setSearching(false)
     setDone(true)
+    searchTaskStore.finish()
+
+    // Auto-save to history database (silent — no download popup)
+    if (localFlights.length > 0 && !abortRef.current?.signal.aborted) {
+      await autoSaveReport(localFlights, label)
+    }
+  }
+
+  async function autoSaveReport(flights: FlightResult[], label: string) {
+    try {
+      const title = `${label} ${CABIN_LABELS[cabin]}`
+      const res = await fetch(`${backendUrl}/api/report/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, flights, api_key: localStorage.getItem('gemini_api_key') || null }),
+      })
+      const data = await res.json()
+      setReportId(data.report_id)
+      searchTaskStore.setReportId(data.report_id)
+    } catch (err) { console.error('Auto-save failed:', err) }
   }
 
   async function generateReport() {
@@ -260,9 +320,21 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   }
 
   const S = singleStyles
+  // Show "task in background" banner when store is running but local state doesn't have results
+  const storeTask = task
+  const showBgBanner = storeTask?.running && !searching && Object.keys(resultsByKey).length === 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {showBgBanner && (
+        <div style={{ background: '#0d2240', border: '1px solid #1e4080', borderRadius: 8, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3b82f6', animation: 'pulse 1.2s infinite', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: '#93c5fd', flex: 1 }}>
+            任务进行中：{storeTask.label} — {storeTask.progress.msg || '搜索中…'} ({storeTask.progress.cur}/{storeTask.progress.total})
+          </span>
+          <button onClick={() => searchTaskStore.abort()} style={{ background: '#7f1d1d', color: '#fca5a5', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>停止</button>
+        </div>
+      )}
       <div style={S.card}>
 
         {/* Trip type toggle */}
@@ -563,8 +635,24 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
   const [reportId, setReportId] = useState<string | null>(null)
   const [genRep, setGenRep] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  const batchTask = useSearchTask()
 
-  const addLog = useCallback((s: string) => setLog(prev => [...prev.slice(-80), s]), [])
+  // On mount: sync to store if a batch task is still running
+  useEffect(() => {
+    const t = searchTaskStore.get()
+    if (t?.running) { setRunning(true); setProgress(t.progress); setLog(t.log) }
+    else if (t?.reportId) setReportId(t.reportId)
+  }, [])
+  useEffect(() => {
+    if (batchTask?.running) { setRunning(true); setProgress(batchTask.progress); setLog(batchTask.log) }
+    if (batchTask?.reportId && !reportId) setReportId(batchTask.reportId)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchTask])
+
+  const addLog = useCallback((s: string) => {
+    setLog(prev => [...prev.slice(-80), s])
+    searchTaskStore.addLog(s)
+  }, [])
 
   // Computed routes matrix
   const routes = origins.flatMap(o => dests.map(d => ({ origin: o, destination: d })))
@@ -607,14 +695,20 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
 
   async function runBatch() {
     if (!routes.length || !expandedDates.length || !selectedCabins.length) return
+    if (searchTaskStore.isRunning()) {
+      if (!window.confirm('当前有任务正在执行，是否停止并开始新任务？')) return
+      searchTaskStore.abort()
+    }
 
-    const dates = expandedDates   // flat expanded list for the API
+    const dates = expandedDates
     const total = routes.length * selectedCabins.length
+    const batchLabel = `批量 ${origins.join('/')}→${dests.slice(0,3).join('/')}${dests.length > 3 ? `…+${dests.length-3}` : ''}`
     setRunning(true)
     setAllFlights([])
     setReportId(null)
     setLog([])
     abortRef.current = new AbortController()
+    searchTaskStore.start(batchLabel, () => abortRef.current?.abort())
 
     let cur = 0
     const collected: FlightResult[] = []
@@ -624,7 +718,9 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
         if (abortRef.current.signal.aborted) break
         cur++
         const label = `[${cur}/${total}] ${route.origin}→${route.destination} ${CABIN_LABELS[cabin]}`
-        setProgress({ msg: `${label}…`, cur, total })
+        const p = { msg: `${label}…`, cur, total }
+        setProgress(p)
+        searchTaskStore.updateProgress(p)
         addLog(`▶ ${label}`)
 
         try {
@@ -658,7 +754,9 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
                 const evt: SSEEvent = JSON.parse(line.slice(6))
                 if (evt.type === 'result' && evt.flights?.length) {
                   collected.push(...evt.flights)
+                  sharedFlights.push(...evt.flights)
                   routeFlights += evt.flights.length
+                  searchTaskStore.updateFlightCount(collected.length)
                 } else if (evt.type === 'progress' && evt.message) {
                   setProgress(p => ({ ...p, msg: `${label} — ${evt.message}` }))
                 }
@@ -677,10 +775,28 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
       if (abortRef.current.signal.aborted) break
     }
 
-    setProgress({ msg: '完成', cur: total, total })
+    const doneP = { msg: '完成', cur: total, total }
+    setProgress(doneP)
     setAllFlights([...collected])
     addLog(`\n✅ 完成，共 ${collected.length} 个航班`)
     setRunning(false)
+    searchTaskStore.finish()
+
+    // Auto-save to history database
+    if (collected.length > 0 && !abortRef.current.signal.aborted) {
+      try {
+        const title = `${batchLabel} ${new Date().toLocaleDateString('zh-CN')}`
+        const res = await fetch(`${backendUrl}/api/report/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, flights: collected, api_key: localStorage.getItem('gemini_api_key') || null }),
+        })
+        const data = await res.json()
+        setReportId(data.report_id)
+        searchTaskStore.setReportId(data.report_id)
+        addLog(`📦 已自动保存到历史数据库 (ID: ${data.report_id})`)
+      } catch (err) { console.error('Auto-save failed:', err) }
+    }
   }
 
   async function generateReport() {
@@ -719,9 +835,19 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
   }
 
   const S = batchStyles
+  const showBatchBgBanner = batchTask?.running && !running
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {showBatchBgBanner && (
+        <div style={{ background: '#0d2240', border: '1px solid #1e4080', borderRadius: 8, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3b82f6', animation: 'pulse 1.2s infinite', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: '#93c5fd', flex: 1 }}>
+            任务进行中：{batchTask.label} — {batchTask.progress.msg || '搜索中…'} ({batchTask.progress.cur}/{batchTask.progress.total}) · 已获取 {batchTask.flightCount} 个航班
+          </span>
+          <button onClick={() => searchTaskStore.abort()} style={{ background: '#7f1d1d', color: '#fca5a5', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>停止</button>
+        </div>
+      )}
 
       {/* Origins */}
       <div style={S.card}>
