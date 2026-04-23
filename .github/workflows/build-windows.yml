@@ -117,6 +117,7 @@ jobs:
         env:
           # 跳过代码签名（无证书）
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── 上传构建产物 ────────────────────────────────────────────────────────
       - name: Upload installer artifact
