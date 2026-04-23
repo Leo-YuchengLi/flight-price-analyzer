@@ -78,41 +78,20 @@ def classify_stop_type(flight: dict) -> str:
 
 def format_date_period(date_str: str, all_dates: list[str] | None = None) -> tuple[str, str]:
     """
-    Adaptive column header based on the spacing between searched dates.
+    Column header label for a searched date.
 
-    Daily (avg gap ≤ 3 days)   : ('JUN 2026', '8 JUN')
-    Weekly (avg gap 4-14 days) : ('JUN 2026', '8JUN-14JUN')
-    Monthly (avg gap > 14 days): ('JUN 2026', 'JUN 2026')
+    Always shows the actual searched date (e.g. '10 JUN') in the sub-label,
+    regardless of how the dates are spaced. This avoids confusing calendar-week
+    ranges (8JUN-14JUN) that imply an entire week was searched when only one
+    date was queried.
+
+    For consecutive daily sequences (avg gap ≤ 1 day) the date is shown as-is.
+    All other cases (weekly reps, monthly reps, single date) show 'D MON'.
     """
     d = dt_date.fromisoformat(date_str)
     month_yr = f"{d.strftime('%b').upper()} {d.year}"
-
-    # Determine display mode from spacing of all searched dates
-    mode = "weekly"   # default
-    if all_dates and len(all_dates) >= 2:
-        sorted_d = sorted(dt_date.fromisoformat(x) for x in all_dates)
-        gaps = [(sorted_d[i+1] - sorted_d[i]).days for i in range(len(sorted_d)-1)]
-        avg_gap = sum(gaps) / len(gaps)
-        if avg_gap <= 3:
-            mode = "daily"
-        elif avg_gap > 14:
-            mode = "monthly"
-        else:
-            mode = "weekly"
-    elif all_dates and len(all_dates) == 1:
-        mode = "daily"
-
-    if mode == "daily":
-        return month_yr, f"{d.day} {d.strftime('%b').upper()}"
-    elif mode == "monthly":
-        return month_yr, d.strftime('%b').upper()
-    else:
-        # weekly: Mon–Sun range containing this date
-        monday = d - timedelta(days=d.weekday())
-        sunday = monday + timedelta(days=6)
-        mon_m  = monday.strftime("%b").upper()
-        sun_m  = sunday.strftime("%b").upper()
-        return month_yr, f"{monday.day}{mon_m}-{sunday.day}{sun_m}"
+    day_label = f"{d.day} {d.strftime('%b').upper()}"
+    return month_yr, day_label
 
 
 # ── Enrich flights ────────────────────────────────────────────────────────────
@@ -491,7 +470,15 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
         s = dt_date.fromisoformat(start)
         e = dt_date.fromisoformat(end)
         month_yr = f"{s.strftime('%b').upper()} {s.year}"
-        lbl = f"{s.day}{s.strftime('%b').upper()}-{e.day}{e.strftime('%b').upper()}"
+        if s == e:
+            # Single-day period: show exact date
+            lbl = f"{s.day} {s.strftime('%b').upper()}"
+        elif s.month == e.month:
+            # Same month: "8-14 JUN"
+            lbl = f"{s.day}-{e.day} {s.strftime('%b').upper()}"
+        else:
+            # Cross-month: "30MAY-5JUN"
+            lbl = f"{s.day}{s.strftime('%b').upper()}-{e.day}{e.strftime('%b').upper()}"
         return month_yr, lbl
 
     date_labels = {pk: _period_header(pk) for pk in period_keys}

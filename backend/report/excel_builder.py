@@ -252,14 +252,7 @@ def _write_matrix_sheet(ws, data: dict, currency: str) -> None:
     if date_labels:
         mode_note = "（按时间段对比）"
     elif dates:
-        from report.analytics import format_date_period as _fdp
-        _, sample_label = _fdp(dates[0], all_dates=dates)
-        if len(sample_label) <= 6 and "-" not in sample_label:
-            mode_note = "（按日期对比）"
-        elif "-" in sample_label:
-            mode_note = "（按周对比）"
-        else:
-            mode_note = "（按月对比）"
+        mode_note = "（按日期对比）"
 
     ws.cell(data_row + 1, 1).value = (
         f"价格单位：{currency}{mode_note}  |  黄色=当日最低价  红底=国航价格  "
