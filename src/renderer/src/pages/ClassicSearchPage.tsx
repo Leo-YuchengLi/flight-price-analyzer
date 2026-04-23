@@ -137,6 +137,8 @@ interface SingleInit {
   cabin: string
   currency: string
   tripType?: 'one_way' | 'round_trip'
+  returnDateStart?: string
+  returnDateEnd?: string
 }
 
 function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleInit }) {
@@ -146,7 +148,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   const [dateStart, setDateStart] = useState(init?.dateStart || '2026-06-01')
   const [dateEnd, setDateEnd]     = useState(init?.dateEnd   || '2026-06-07')
   const [returnDate, setReturnDate] = useState(
-    init?.dateStart ? addDays(init.dateStart, 7) : '2026-06-14'
+    init?.returnDateStart || (init?.dateStart ? addDays(init.dateStart, 7) : '2026-06-14')
   )
   const [weekdays, setWeekdays]   = useState<number[]>(init?.weekdayFilter || [])
   const [cabin, setCabin]         = useState(init?.cabin    || 'Y')
@@ -463,6 +465,8 @@ interface BatchInit {
   dateRanges?: { start: string; end: string }[]
   cabins: string[]
   currency: string
+  tripType?: 'one_way' | 'round_trip'
+  returnDates?: string[]
 }
 
 // City group presets for quick destination selection
@@ -549,6 +553,8 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
     return { Y: true, C: true }
   })
   const [currency, setCurrency] = useState(init?.currency || 'HKD')
+  const [batchTripType] = useState<'one_way' | 'round_trip'>(init?.tripType || 'one_way')
+  const [batchReturnDates] = useState<string[]>(init?.returnDates || [])
   const [dryRun, setDryRun] = useState(false)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState({ msg: '', cur: 0, total: 0 })
@@ -628,7 +634,9 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
             body: JSON.stringify({
               origin: route.origin, destination: route.destination,
               dates, cabin, currency,
-              trip_type: 'one_way', dry_run: dryRun,
+              trip_type: batchTripType,
+              return_dates: batchTripType === 'round_trip' ? batchReturnDates : [],
+              dry_run: dryRun,
               weekday_filter: [], show_browser: false,
             }),
             signal: abortRef.current.signal,

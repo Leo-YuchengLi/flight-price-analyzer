@@ -22,6 +22,9 @@ export interface SearchIntent {
   weekday_filter: number[]
   task_type: 'batch' | 'single'
   trip_type: 'one_way' | 'round_trip'
+  return_dates: string[]
+  return_date_start: string | null
+  return_date_end: string | null
   cabins: string[]
   currency: string
   ready_to_search: boolean
@@ -329,6 +332,11 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
   const [dateStart, setDateStart] = useState(intent.date_start || '')
   const [dateEnd, setDateEnd]     = useState(intent.date_end || '')
 
+  const isRoundTrip = intent.trip_type === 'round_trip'
+  const [returnDates, setReturnDates] = useState<string[]>(intent.return_dates || [])
+  const [returnDateStart, setReturnDateStart] = useState(intent.return_date_start || '')
+  const [returnDateEnd, setReturnDateEnd]     = useState(intent.return_date_end || '')
+
   const [cabins, setCabins]     = useState<Record<string,boolean>>(
     Object.fromEntries(['Y','C','F'].map(c => [c, intent.cabins.includes(c)]))
   )
@@ -342,9 +350,11 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
   const singleDates = isSingle ? dateRange(dateStart, dateEnd, weekdays) : []
 
   const batchDateCount = hasRanges ? dateRanges.length : dates.length
+  const singleReturnDates = isSingle && isRoundTrip
+    ? dateRange(returnDateStart, returnDateEnd, weekdays) : []
   const totalQ = isSingle
-    ? routes.length * singleDates.length * selectedCabins.length
-    : routes.length * batchDateCount * selectedCabins.length
+    ? routes.length * (singleDates.length + (isRoundTrip ? singleReturnDates.length : 0)) * selectedCabins.length
+    : routes.length * (batchDateCount + (isRoundTrip ? returnDates.length : 0)) * selectedCabins.length
 
   function toggleWeekday(wd: number) {
     setWeekdays(prev =>
@@ -365,6 +375,9 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
             weekdayFilter: weekdays,
             cabin: selectedCabins[0] || 'Y',
             currency,
+            tripType: isRoundTrip ? 'round_trip' : 'one_way',
+            returnDateStart: isRoundTrip ? returnDateStart : '',
+            returnDateEnd: isRoundTrip ? returnDateEnd : '',
           },
         },
       })
@@ -377,6 +390,8 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
             dateRanges: hasRanges ? dateRanges : [],
             cabins: selectedCabins,
             currency,
+            tripType: isRoundTrip ? 'round_trip' : 'one_way',
+            returnDates: isRoundTrip ? returnDates : [],
           },
         },
       })
@@ -493,6 +508,33 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
         </>
       )}
 
+      {/* Return dates — only for round_trip */}
+      {isRoundTrip && (
+        !isSingle ? (
+          <Row label="返程日" icon="↩️">
+            <ChipList
+              items={returnDates}
+              onRemove={v => setReturnDates(d => d.filter(x => x !== v))}
+              onAdd={v => setReturnDates(d => [...d, v].sort())}
+              placeholder="2026-07-10"
+              inputType="date"
+              maxLength={10}
+            />
+          </Row>
+        ) : (
+          <>
+            <Row label="返程起" icon="↩️">
+              <input type="date" style={S.dateInput} value={returnDateStart}
+                onChange={e => setReturnDateStart(e.target.value)} />
+            </Row>
+            <Row label="返程止" icon="↩️">
+              <input type="date" style={S.dateInput} value={returnDateEnd}
+                onChange={e => setReturnDateEnd(e.target.value)} />
+            </Row>
+          </>
+        )
+      )}
+
       {/* Cabins */}
       <Row label="舱位" icon="💺">
         <div style={{ display: 'flex', gap: 10 }}>
@@ -515,8 +557,17 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
 
       {/* Summary */}
       <div style={S.summary}>
-        {routes.length} 条航线 × {isSingle ? effectiveDates.length : (hasRanges ? `${dateRanges.length}段` : dates.length)} 个{isSingle || !hasRanges ? '日期' : '时间段'} × {selectedCabins.length} 个舱位
-        = <strong style={{ color: '#60a5fa' }}>{totalQ} 次查询</strong>
+        {isRoundTrip ? (
+          <>
+            {routes.length} 条航线 ×（去程 {isSingle ? singleDates.length : (hasRanges ? `${dateRanges.length}段` : dates.length)} + 返程 {isSingle ? singleReturnDates.length : returnDates.length}）个日期 × {selectedCabins.length} 个舱位
+            = <strong style={{ color: '#60a5fa' }}>{totalQ} 次查询</strong>
+          </>
+        ) : (
+          <>
+            {routes.length} 条航线 × {isSingle ? effectiveDates.length : (hasRanges ? `${dateRanges.length}段` : dates.length)} 个{isSingle || !hasRanges ? '日期' : '时间段'} × {selectedCabins.length} 个舱位
+            = <strong style={{ color: '#60a5fa' }}>{totalQ} 次查询</strong>
+          </>
+        )}
         <span style={{ color: '#475569', marginLeft: 8, fontSize: 11 }}>
           约需 {Math.ceil(totalQ * 0.5)}–{Math.ceil(totalQ)} 分钟
         </span>
