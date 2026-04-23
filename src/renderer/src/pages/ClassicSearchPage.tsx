@@ -855,16 +855,32 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
           </label>
         </div>
 
+        {/* Round-trip return dates info bar */}
+        {batchTripType === 'round_trip' && batchReturnDates.length > 0 && (
+          <div style={{ marginTop: 10, background: '#0d2240', border: '1px solid #1e4080', borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ fontSize: 12, color: '#60a5fa', fontWeight: 600, marginBottom: 6 }}>↩️ 返程日期（往返查询）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {batchReturnDates.map(d => (
+                <span key={d} style={{ background: '#1a3660', color: '#93c5fd', fontSize: 12, padding: '3px 10px', borderRadius: 8, border: '1px solid #2a4a80' }}>{d}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Big summary */}
         <div style={{ marginTop: 14, background: '#0f172a', borderRadius: 8, padding: '12px 16px' }}>
           <div style={{ fontSize: 13, color: '#94a3b8' }}>
             <span style={{ color: '#60a5fa', fontWeight: 600 }}>{routes.length}</span> 条航线
             &nbsp;×&nbsp;
-            <span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> 个日期
+            {batchTripType === 'round_trip' && batchReturnDates.length > 0 ? (
+              <>（去程 <span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> + 返程 <span style={{ color: '#60a5fa', fontWeight: 600 }}>{batchReturnDates.length}</span>）个日期</>
+            ) : (
+              <><span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> 个日期</>
+            )}
             &nbsp;×&nbsp;
             <span style={{ color: '#60a5fa', fontWeight: 600 }}>{selectedCabins.length}</span> 个舱位
             &nbsp;=&nbsp;
-            <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{totalQ}</span>
+            <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{batchTripType === 'round_trip' && batchReturnDates.length > 0 ? routes.length * (expandedDates.length + batchReturnDates.length) * selectedCabins.length : totalQ}</span>
             <span style={{ color: '#475569' }}> 次查询</span>
             <span style={{ color: '#334155', marginLeft: 12, fontSize: 12 }}>
               约 {Math.ceil(totalQ * 0.3)}–{Math.ceil(totalQ * 0.5)} 分钟
