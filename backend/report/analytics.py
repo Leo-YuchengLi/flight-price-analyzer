@@ -12,7 +12,7 @@ CA_CODE = "CA"
 # Key airlines shown as dedicated columns in both sheets
 KEY_AIRLINE_CODES = {"CA", "CZ", "MU", "BA", "VS", "HU"}
 
-CABIN_LABEL   = {"Y": "经济舱", "C": "商务舱", "F": "头等舱"}
+CABIN_LABEL   = {"Y": "经济舱", "W": "超级经济舱", "C": "商务舱", "F": "头等舱"}
 
 # Internal category → Excel TYPE label
 # D  : direct (0 stops)
@@ -38,6 +38,14 @@ CHINESE_CITIES: frozenset[str] = frozenset([
 
 MAX_STOPS    = 1   # exclude 2+ connection itineraries
 MAX_LAYOVER_H = 24  # exclude connections with layover > 24 hours between segments
+
+
+def _safe_stops(f: dict) -> int:
+    """Return stops as int, defaulting to 0 for None/missing/invalid values."""
+    try:
+        return int(f.get("stops") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ── Layover filter ────────────────────────────────────────────────────────────
@@ -74,22 +82,46 @@ def classify_stop_type(flight: dict) -> str:
     return "ID" if dest in CHINESE_CITIES else "II"
 
 
+# ── Round-trip helpers ────────────────────────────────────────────────────────
+
+def _date_key(f: dict) -> str:
+    """Canonical date key for a flight dict.
+    One-way  → 'YYYY-MM-DD'
+    Round-trip → 'YYYY-MM-DD|YYYY-MM-DD'  (departure|return)
+    """
+    if f.get("trip_type") == "round_trip" and f.get("return_date"):
+        return f"{f['departure_date']}|{f['return_date']}"
+    return f["departure_date"]
+
+
+def _route_key(f: dict) -> str:
+    """Route string for display / grouping.
+    One-way   → 'ORG-DST'
+    Round-trip → 'ORG⇄DST'
+    """
+    sep = "⇄" if f.get("trip_type") == "round_trip" else "-"
+    return f"{f['origin']}{sep}{f['destination']}"
+
+
 # ── Date period label ─────────────────────────────────────────────────────────
 
 def format_date_period(date_str: str, all_dates: list[str] | None = None) -> tuple[str, str]:
     """
     Column header label for a searched date.
 
-    Always shows the actual searched date (e.g. '10 JUN') in the sub-label,
-    regardless of how the dates are spaced. This avoids confusing calendar-week
-    ranges (8JUN-14JUN) that imply an entire week was searched when only one
-    date was queried.
-
-    For consecutive daily sequences (avg gap ≤ 1 day) the date is shown as-is.
-    All other cases (weekly reps, monthly reps, single date) show 'D MON'.
+    Supports both one-way ('YYYY-MM-DD') and round-trip ('YYYY-MM-DD|YYYY-MM-DD') keys.
+    Round-trip  → month_yr = departure month, day_label = 'DDdep Mon ⇄ DDret Mon'
+    One-way     → 'D MON'
     """
+    if "|" in date_str:
+        dep_str, ret_str = date_str.split("|", 1)
+        d = dt_date.fromisoformat(dep_str)
+        r = dt_date.fromisoformat(ret_str)
+        month_yr  = f"{d.strftime('%b').upper()} {d.year}"
+        day_label = f"{d.day}{d.strftime('%b').upper()}⇄{r.day}{r.strftime('%b').upper()}"
+        return month_yr, day_label
     d = dt_date.fromisoformat(date_str)
-    month_yr = f"{d.strftime('%b').upper()} {d.year}"
+    month_yr  = f"{d.strftime('%b').upper()} {d.year}"
     day_label = f"{d.day} {d.strftime('%b').upper()}"
     return month_yr, day_label
 
@@ -150,7 +182,7 @@ def enrich_flights(flights: list[dict]) -> list[dict]:
     flights = _normalize_currency(flights)
     # Drop 2+ stop and excessive-layover itineraries
     flights = [f for f in flights
-               if int(f.get("stops", 0)) <= MAX_STOPS
+               if _safe_stops(f) <= MAX_STOPS
                and not _has_excessive_layover(f)]
 
     for f in flights:
@@ -236,7 +268,7 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
     # Normalize to dominant currency + drop excessive-stop/layover flights
     flights = _normalize_currency(flights)
     flights = [f for f in flights
-               if int(f.get("stops", 0)) <= MAX_STOPS
+               if _safe_stops(f) <= MAX_STOPS
                and not _has_excessive_layover(f)]
 
     for f in flights:
@@ -245,22 +277,29 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
         if "type_display" not in f:
             f["type_display"] = CATEGORY_DISPLAY.get(f["category"], f["category"])
 
-    dates = sorted(set(f["departure_date"] for f in flights))
+    dates = sorted(set(_date_key(f) for f in flights))
 
-    # ── Per-cell minimums: (route, cabin, type_label, date) → {code: min_price}
+    # Build airline code → display name mapping (prefer shorter/simpler names)
+    airline_names: dict[str, str] = {}
+    for f in flights:
+        code, name = f["airline_code"], f["airline"]
+        if code not in airline_names or len(name) < len(airline_names[code]):
+            airline_names[code] = name
+
+    # ── Per-cell minimums: (route, cabin, type_label, date_key) → {code: min_price}
     cell_prices: dict[tuple, dict[str, float]] = defaultdict(dict)
     for f in flights:
         if f["price"] <= 0:
             continue
-        route = f"{f['origin']}-{f['destination']}"
-        key   = (route, f["cabin"], f["type_display"], f["departure_date"])
+        route = _route_key(f)
+        key   = (route, f["cabin"], f["type_display"], _date_key(f))
         code  = f["airline_code"]
         if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
             cell_prices[key][code] = f["price"]
 
     # ── Collect (type_label, route, cabin) tuples in display order ────────────
     TYPE_ORDER = {"DIRECT": 0, "ID": 1, "II": 2}
-    CABIN_ORDER = {"Y": 0, "C": 1, "F": 2}
+    CABIN_ORDER = {"Y": 0, "W": 1, "C": 2, "F": 3}
 
     row_keys: set[tuple] = set()
     for (route, cabin, type_label, _date) in cell_prices:
@@ -301,12 +340,9 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
             # "lowest fare(other)" = global market minimum across ALL airlines
             other_min = None
             if prices:
-                best_code = min(prices, key=prices.__getitem__)
-                airline_name = next(
-                    (f["airline"] for f in flights
-                     if f["airline_code"] == best_code), best_code
-                )
-                other_min = (prices[best_code], airline_name)
+                best_code    = min(prices, key=prices.__getitem__)
+                airline_name = airline_names.get(best_code, best_code)
+                other_min    = (prices[best_code], airline_name)
 
             date_data[date] = {
                 "CA":    ca_p,
@@ -337,18 +373,17 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
     # ── Build detail_rows ─────────────────────────────────────────────────────
     # One row per (route, date, type_label, cabin)
     detail_keys: dict[tuple, dict] = {}
-    airline_names: dict[str, str] = {}
 
     for f in flights:
-        airline_names[f["airline_code"]] = f["airline"]
         if f["price"] <= 0:
             continue
-        route = f"{f['origin']}-{f['destination']}"
-        key   = (route, f["departure_date"], f["type_display"], f["cabin"])
+        route = _route_key(f)
+        dk    = _date_key(f)
+        key   = (route, dk, f["type_display"], f["cabin"])
 
         if key not in detail_keys:
             detail_keys[key] = {
-                "route": route, "date": f["departure_date"],
+                "route": route, "date": dk,
                 "type": f["type_display"], "cabin_label": CABIN_LABEL.get(f["cabin"], f["cabin"]),
                 "prices": defaultdict(lambda: None),
                 "all_prices": [],
@@ -446,7 +481,7 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
     # Normalize and filter
     flights = _normalize_currency(flights)
     flights = [f for f in flights
-               if int(f.get("stops", 0)) <= MAX_STOPS
+               if _safe_stops(f) <= MAX_STOPS
                and not _has_excessive_layover(f)]
 
     for f in flights:
@@ -483,6 +518,13 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
 
     date_labels = {pk: _period_header(pk) for pk in period_keys}
 
+    # Build airline code → display name (prefer shorter/simpler names)
+    airline_names: dict[str, str] = {}
+    for f in flights:
+        code, name = f["airline_code"], f["airline"]
+        if code not in airline_names or len(name) < len(airline_names[code]):
+            airline_names[code] = name
+
     # cell_prices: (route, cabin, type_label, period_key) → {code: min_price}
     cell_prices: dict[tuple, dict[str, float]] = defaultdict(dict)
     for f in flights:
@@ -491,14 +533,14 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
         pk = find_period(f["departure_date"])
         if pk is None:
             continue
-        route = f"{f['origin']}-{f['destination']}"
+        route = _route_key(f)
         key   = (route, f["cabin"], f["type_display"], pk)
         code  = f["airline_code"]
         if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
             cell_prices[key][code] = f["price"]
 
     TYPE_ORDER  = {"DIRECT": 0, "ID": 1, "DD": 2, "II": 3}
-    CABIN_ORDER = {"Y": 0, "C": 1, "F": 2}
+    CABIN_ORDER = {"Y": 0, "W": 1, "C": 2, "F": 3}
 
     row_keys: set[tuple] = set()
     for (route, cabin, type_label, _pk) in cell_prices:
@@ -537,11 +579,8 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
             other_min = None
             if prices:
                 best_code    = min(prices, key=prices.__getitem__)
-                airline_name = next(
-                    (f["airline"] for f in flights if f["airline_code"] == best_code),
-                    best_code
-                )
-                other_min = (prices[best_code], airline_name)
+                airline_name = airline_names.get(best_code, best_code)
+                other_min    = (prices[best_code], airline_name)
 
             date_data[pk] = {
                 "CA": ca_p, "CZ": cz_p, "MU": mu_p,
@@ -567,16 +606,14 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
 
     # detail_rows — one row per (route, period, type, cabin)
     detail_keys: dict[tuple, dict] = {}
-    airline_names: dict[str, str] = {}
 
     for f in flights:
-        airline_names[f["airline_code"]] = f["airline"]
         if f["price"] <= 0:
             continue
         pk = find_period(f["departure_date"])
         if pk is None:
             continue
-        route = f"{f['origin']}-{f['destination']}"
+        route = _route_key(f)
         key   = (route, pk, f["type_display"], f["cabin"])
 
         if key not in detail_keys:
@@ -702,7 +739,7 @@ def summary_stats(flights: list[dict]) -> dict[str, Any]:
         "price_avg":      round(sum(prices) / len(prices), 0) if prices else 0,
         "direct_pct":     round(direct / len(flights) * 100, 1) if flights else 0,
         "ca_price_avg":   round(sum(ca_prices) / len(ca_prices), 0) if ca_prices else None,
-        "currency":       flights[0]["currency"] if flights else "",
+        "currency":       flights[0].get("currency", "GBP") if flights else "",
         "cabin":          flights[0]["cabin"] if flights else "",
         "generated_at":   __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

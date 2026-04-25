@@ -4,7 +4,7 @@ Computes Air China competitive metrics from enriched flight data.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date as dt_date
 from typing import Any
 
@@ -17,6 +17,14 @@ CABIN_LABEL   = {"Y": "经济舱", "C": "公务舱", "F": "头等舱"}
 TYPE_ORDER    = {"DIRECT": 0, "ID": 1, "II": 2}
 CABIN_ORDER   = {"Y": 0, "C": 1, "F": 2}
 KEY_AIRLINES  = {"CA", "CZ", "MU", "BA", "VS", "HU"}
+
+
+def _safe_stops(f: dict) -> int:
+    """Return stops as int, defaulting to 0 for None/missing/invalid values."""
+    try:
+        return int(f.get("stops") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def compute_ca_analytics(
@@ -61,7 +69,7 @@ def compute_ca_analytics(
     # ── Filter flights ────────────────────────────────────────────────────────
     flights = _normalize_currency(flights)
     flights = [f for f in flights
-               if int(f.get("stops", 0)) <= MAX_STOPS
+               if _safe_stops(f) <= MAX_STOPS
                and not _has_excessive_layover(f)]
 
     for f in flights:
@@ -120,19 +128,51 @@ def compute_ca_analytics(
     for f in flights:
         period = _get_period(f["departure_date"])
         cabin = f["cabin"]
-        route = f"{f['origin']}-{f['destination']}"
+        # Separate one-way and round-trip so their prices are never mixed
+        sep   = "⇄" if f.get("trip_type") == "round_trip" else "-"
+        route = f"{f['origin']}{sep}{f['destination']}"
         type_label = f.get("type_display", "")
         code  = f["airline_code"]
         price = f["price"]
         if price <= 0:
             continue
-        airline_names[code] = f.get("airline", code)
+        # Prefer shorter/simpler name (avoids "Lufthansa, Air China" overwriting "Air China")
+        name = f.get("airline", code)
+        if code not in airline_names or len(name) < len(airline_names[code]):
+            airline_names[code] = name
         cell = cells[cabin][route][type_label][period]
         if code not in cell or price < cell[code]:
             cell[code] = price
 
-    currency = flights[0]["currency"] if flights else "HKD"
-    result: dict[str, Any] = {"currency": currency, "cabins": {}}
+    currency = flights[0]["currency"] if flights else "GBP"
+
+    # ── Coverage metadata ─────────────────────────────────────────────────────
+    trip_type_counts = Counter(f.get("trip_type", "one_way") for f in flights)
+    direct_count     = sum(1 for f in flights if f.get("is_direct") or int(f.get("stops", 0)) == 0)
+    connecting_count = len(flights) - direct_count
+    all_routes       = set(
+        f"{f['origin']}{'⇄' if f.get('trip_type') == 'round_trip' else '-'}{f['destination']}"
+        for f in flights
+    )
+    ca_routes = set(
+        f"{f['origin']}{'⇄' if f.get('trip_type') == 'round_trip' else '-'}{f['destination']}"
+        for f in flights if f["airline_code"] == "CA"
+    )
+    routes_without_ca = sorted(all_routes - ca_routes)
+
+    result: dict[str, Any] = {
+        "currency": currency,
+        "cabins": {},
+        "coverage": {
+            "total_flights":      len(flights),
+            "trip_type_counts":   dict(trip_type_counts),
+            "direct_count":       direct_count,
+            "connecting_count":   connecting_count,
+            "total_routes":       len(all_routes),
+            "ca_routes_count":    len(ca_routes),
+            "routes_without_ca":  routes_without_ca,
+        },
+    }
 
     # ── Build per-cabin analytics ─────────────────────────────────────────────
     for cabin in sorted(cells.keys(), key=lambda c: CABIN_ORDER.get(c, 9)):

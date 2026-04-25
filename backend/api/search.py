@@ -97,21 +97,33 @@ async def _run_search(req: ClassicSearchRequest):
         yield _sse({"type": "error", "message": "所选日期过滤后为空，请检查星期筛选设置"})
         return
 
-    # For round-trip, apply same filter to return dates
-    return_dates = _apply_weekday_filter(req.return_dates, req.weekday_filter) \
-        if req.trip_type == "round_trip" else []
-
-    # Build full job list: outbound legs + (for round-trip) return legs
-    jobs = [("out", origin, destination, d) for d in dates]
-    if req.trip_type == "round_trip" and return_dates:
-        jobs += [("ret", destination, origin, d) for d in return_dates]
+    # Build job list
+    # Round-trip: one package search per (depart_date, return_date) pair — never split into two one-ways
+    # One-way: one search per date
+    if req.trip_type == "round_trip":
+        return_dates = _apply_weekday_filter(req.return_dates, req.weekday_filter) \
+            if req.return_dates else []
+        if not return_dates:
+            yield _sse({"type": "error", "message": "往返搜索缺少返程日期，请填写返程日期"})
+            return
+        # Pair outbound ↔ return dates: if only one return date, apply to all outbound
+        if len(return_dates) == 1:
+            paired = [(d, return_dates[0]) for d in dates]
+        else:
+            paired = list(zip(dates, return_dates))
+        jobs = [("rt", origin, destination, dep_d, ret_d) for dep_d, ret_d in paired]
+        route_label = f"{origin} ⇄ {destination}"
+        desc = f"往返，{len(jobs)} 个出发日"
+    else:
+        jobs = [("ow", origin, destination, d, "") for d in dates]
+        route_label = f"{origin} → {destination}"
+        desc = f"单程，{len(dates)} 个出发日"
 
     total = len(jobs)
     all_flights = []
 
     yield _sse({"type": "progress",
-                "message": f"准备搜索 {origin} → {destination}，共 {len(dates)} 个出发日"
-                           + (f" + {len(return_dates)} 个返回日" if return_dates else ""),
+                "message": f"准备搜索 {route_label}，{desc}",
                 "current": 0, "total": total})
 
     # Start browser — protected by a lock so two parallel requests don't both
@@ -125,10 +137,15 @@ async def _run_search(req: ClassicSearchRequest):
             else:
                 scraper._route_count += 1
 
-    for i, (leg, org, dst, date) in enumerate(jobs, 1):
-        leg_label = "去程" if leg == "out" else "返程"
+    for i, (mode, org, dst, date, return_date) in enumerate(jobs, 1):
+        if mode == "rt":
+            arrow = "⇄"
+            label = f"{org} {arrow} {dst}  去程 {date} / 返程 {return_date}"
+        else:
+            arrow = "→"
+            label = f"{org} {arrow} {dst}  {date}"
         yield _sse({"type": "progress",
-                    "message": f"[{i}/{total}] {leg_label} {org}→{dst} {date}…",
+                    "message": f"[{i}/{total}] {label}…",
                     "current": i, "total": total})
 
         try:
@@ -138,16 +155,13 @@ async def _run_search(req: ClassicSearchRequest):
                 date=date,
                 cabin=req.cabin,
                 currency=req.currency,
-                trip_type="one_way",   # each leg is always scraped as one-way
+                trip_type=req.trip_type,
+                return_date=return_date,
                 dry_run=req.dry_run,
             )
 
-            # Tag flights with leg info for round-trip
-            if req.trip_type == "round_trip":
-                for f in flights:
-                    f["leg"] = leg
-
-            yield _sse({"type": "result", "date": date, "leg": leg, "flights": flights, "cached": False})
+            yield _sse({"type": "result", "date": date, "return_date": return_date,
+                        "flights": flights, "cached": False})
             all_flights.extend(flights)
 
         except Exception as exc:

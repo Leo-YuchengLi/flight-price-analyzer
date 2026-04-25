@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useReducer } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useBackend } from '../hooks/useBackend'
 import { searchTaskStore, sharedFlights } from '../hooks/searchTaskStore'
 import { useSearchTask } from '../hooks/useSearchTask'
+import { taskGroupsStore, TGTask } from '../hooks/taskGroupsStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ interface SSEEvent {
   current?: number
   total?: number
   date?: string
-  leg?: 'out' | 'ret'
+  return_date?: string
   flights?: FlightResult[]
   cached?: boolean
   total_flights?: number
@@ -65,7 +66,7 @@ interface SSEEvent {
 
 interface ODPair { id: string; origin: string; destination: string }
 
-const CABIN_LABELS: Record<string, string> = { Y: '经济舱', C: '商务舱', F: '头等舱' }
+const CABIN_LABELS: Record<string, string> = { Y: '经济舱', W: '超级经济舱', C: '商务舱', F: '头等舱' }
 const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY']
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -154,7 +155,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   )
   const [weekdays, setWeekdays]   = useState<number[]>(init?.weekdayFilter || [])
   const [cabin, setCabin]         = useState(init?.cabin    || 'Y')
-  const [currency, setCurrency]   = useState(init?.currency || 'HKD')
+  const [currency, setCurrency]   = useState(init?.currency || 'GBP')
   const [showBrowser, setShowBrowser] = useState(false)
   const [dryRun, setDryRun]       = useState(false)
 
@@ -214,14 +215,14 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
       searchTaskStore.abort()
     }
     const label = tripType === 'round_trip'
-      ? `${origin}→${dest} 去程${dateStart} 返程${returnDate}`
+      ? `${origin}⇄${dest} 去程${dateStart} 返程${returnDate}`
       : `${origin}→${dest} ${dateStart}~${dateEnd}`
     setSearching(true)
     setResultsByKey({})
     setDone(false)
     setReportId(null)
     const dates = tripType === 'round_trip' ? [dateStart] : filtDates
-    const initProgress = { msg: '准备中…', cur: 0, total: tripType === 'round_trip' ? 2 : dates.length }
+    const initProgress = { msg: '准备中…', cur: 0, total: dates.length }
     setProgress(initProgress)
     abortRef.current = new AbortController()
     searchTaskStore.start(label, () => abortRef.current?.abort())
@@ -262,7 +263,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
               setProgress(p)
               searchTaskStore.updateProgress(p)
             } else if (evt.type === 'result' && evt.flights) {
-              const key = evt.leg ? `${evt.date}-${evt.leg}` : evt.date!
+              const key = evt.return_date ? `${evt.date}⇄${evt.return_date}` : evt.date!
               setResultsByKey(p => ({ ...p, [key]: evt.flights! }))
               localFlights.push(...evt.flights)
               sharedFlights.push(...evt.flights)
@@ -453,7 +454,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
           {!searching
             ? <button style={S.btnPrimary} onClick={handleSearch}
                 disabled={tripType === 'one_way' ? filtDates.length === 0 : !dateStart}>
-                🔍 开始搜索 ({tripType === 'one_way' ? `${filtDates.length}天` : '去+返 共2次'})
+                🔍 开始搜索 ({tripType === 'one_way' ? `${filtDates.length}天` : '1次往返'})
               </button>
             : <button style={{ ...S.btnPrimary, background: '#7f1d1d' }}
                 onClick={() => abortRef.current?.abort()}>
@@ -477,15 +478,16 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
       )}
 
       {Object.entries(resultsByKey).sort().map(([key, flights]) => {
-        const isReturn = key.endsWith('-ret')
-        const dateLabel = key.replace(/-(?:out|ret)$/, '')
+        const isRoundTrip = key.includes('⇄')
+        const dateLabel = isRoundTrip ? key.replace('⇄', ' ⇄ 返程 ') : key
         return (
           <div key={key} style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontWeight: 600, color: '#e2e8f0' }}>
-                {dateLabel}
-                {isReturn && <span style={{ marginLeft: 8, fontSize: 11, color: '#fb923c', background: '#431407', padding: '1px 7px', borderRadius: 10 }}>返程</span>}
-                {key.endsWith('-out') && <span style={{ marginLeft: 8, fontSize: 11, color: '#4ade80', background: '#14532d', padding: '1px 7px', borderRadius: 10 }}>去程</span>}
+                {isRoundTrip
+                  ? <>去程 {key.split('⇄')[0]} <span style={{ color: '#60a5fa' }}>⇄</span> 返程 {key.split('⇄')[1]}</>
+                  : dateLabel}
+                {isRoundTrip && <span style={{ marginLeft: 8, fontSize: 11, color: '#60a5fa', background: '#172554', padding: '1px 7px', borderRadius: 10 }}>往返总价</span>}
               </span>
               <span style={{ fontSize: 12, color: '#475569' }}>{flights.length} 个航班</span>
             </div>
@@ -539,6 +541,7 @@ interface BatchInit {
   currency: string
   tripType?: 'one_way' | 'round_trip'
   returnDates?: string[]
+  // Parallel return dates for round-trip batch (returnDates[i] pairs with dates[i])
 }
 
 // City group presets for quick destination selection
@@ -620,13 +623,13 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
   const [newRangeEnd, setNewRangeEnd] = useState('')
   const [cabins, setCabins] = useState<Record<string, boolean>>(() => {
     if (init?.cabins?.length) {
-      return { Y: init.cabins.includes('Y'), C: init.cabins.includes('C'), F: init.cabins.includes('F') }
+      return { Y: init.cabins.includes('Y'), W: init.cabins.includes('W'), C: init.cabins.includes('C'), F: init.cabins.includes('F') }
     }
     return { Y: true, C: true }
   })
-  const [currency, setCurrency] = useState(init?.currency || 'HKD')
-  const [batchTripType] = useState<'one_way' | 'round_trip'>(init?.tripType || 'one_way')
-  const [batchReturnDates] = useState<string[]>(init?.returnDates || [])
+  const [currency, setCurrency] = useState(init?.currency || 'GBP')
+  const [batchTripType, setBatchTripType] = useState<'one_way' | 'round_trip'>(init?.tripType || 'one_way')
+  const [batchReturnDates, setBatchReturnDates] = useState<string[]>(init?.returnDates || [])
   const [dryRun, setDryRun] = useState(false)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState({ msg: '', cur: 0, total: 0 })
@@ -702,7 +705,8 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
 
     const dates = expandedDates
     const total = routes.length * selectedCabins.length
-    const batchLabel = `批量 ${origins.join('/')}→${dests.slice(0,3).join('/')}${dests.length > 3 ? `…+${dests.length-3}` : ''}`
+    const sep = batchTripType === 'round_trip' ? '⇄' : '→'
+    const batchLabel = `批量 ${origins.join('/')}${sep}${dests.slice(0,3).join('/')}${dests.length > 3 ? `…+${dests.length-3}` : ''}`
     setRunning(true)
     setAllFlights([])
     setReportId(null)
@@ -731,7 +735,7 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
               origin: route.origin, destination: route.destination,
               dates, cabin, currency,
               trip_type: batchTripType,
-              return_dates: batchTripType === 'round_trip' ? batchReturnDates : [],
+              return_dates: batchTripType === 'round_trip' ? batchReturnDates.filter(Boolean) : [],
               dry_run: dryRun,
               weekday_filter: [], show_browser: false,
             }),
@@ -981,14 +985,42 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
           </label>
         </div>
 
-        {/* Round-trip return dates info bar */}
-        {batchTripType === 'round_trip' && batchReturnDates.length > 0 && (
+        {/* Trip type toggle */}
+        <div style={{ marginTop: 12, display: 'flex', gap: 0, background: '#0f172a', borderRadius: 8, padding: 3, width: 'fit-content' }}>
+          {([['one_way', '单程'], ['round_trip', '往返']] as const).map(([t, lbl]) => (
+            <button key={t} onClick={() => setBatchTripType(t)} style={{
+              padding: '5px 14px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 6, fontWeight: 500,
+              background: batchTripType === t ? 'linear-gradient(135deg,#3b82f6,#6366f1)' : 'transparent',
+              color: batchTripType === t ? '#fff' : '#64748b',
+            }}>{lbl}</button>
+          ))}
+        </div>
+
+        {/* Round-trip return dates (editable) */}
+        {batchTripType === 'round_trip' && (
           <div style={{ marginTop: 10, background: '#0d2240', border: '1px solid #1e4080', borderRadius: 8, padding: '10px 14px' }}>
-            <div style={{ fontSize: 12, color: '#60a5fa', fontWeight: 600, marginBottom: 6 }}>↩️ 返程日期（往返查询）</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {batchReturnDates.map(d => (
-                <span key={d} style={{ background: '#1a3660', color: '#93c5fd', fontSize: 12, padding: '3px 10px', borderRadius: 8, border: '1px solid #2a4a80' }}>{d}</span>
+            <div style={{ fontSize: 12, color: '#60a5fa', fontWeight: 600, marginBottom: 6 }}>
+              ↩️ 返程日期（与出发日期一一对应）
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {expandedDates.map((dep, i) => (
+                <span key={dep} style={{ fontSize: 11, color: '#94a3b8', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '2px 8px' }}>
+                  {dep} ⇄ {batchReturnDates[i] || <span style={{ color: '#f87171' }}>未设置</span>}
+                </span>
               ))}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {batchReturnDates.map((d, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="date" value={d}
+                    onChange={e => setBatchReturnDates(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                    style={{ ...S.input, width: 140, fontSize: 12, colorScheme: 'dark' }} />
+                  <button onClick={() => setBatchReturnDates(prev => prev.filter((_, j) => j !== i))}
+                    style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 14 }}>×</button>
+                </div>
+              ))}
+              <button onClick={() => setBatchReturnDates(prev => [...prev, ''])}
+                style={{ ...S.addBtn, fontSize: 11 }}>+ 添加返程日</button>
             </div>
           </div>
         )}
@@ -999,14 +1031,14 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
             <span style={{ color: '#60a5fa', fontWeight: 600 }}>{routes.length}</span> 条航线
             &nbsp;×&nbsp;
             {batchTripType === 'round_trip' && batchReturnDates.length > 0 ? (
-              <>（去程 <span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> + 返程 <span style={{ color: '#60a5fa', fontWeight: 600 }}>{batchReturnDates.length}</span>）个日期</>
+              <><span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> 个往返日期对</>
             ) : (
               <><span style={{ color: '#60a5fa', fontWeight: 600 }}>{expandedDates.length}</span> 个日期</>
             )}
             &nbsp;×&nbsp;
             <span style={{ color: '#60a5fa', fontWeight: 600 }}>{selectedCabins.length}</span> 个舱位
             &nbsp;=&nbsp;
-            <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{batchTripType === 'round_trip' && batchReturnDates.length > 0 ? routes.length * (expandedDates.length + batchReturnDates.length) * selectedCabins.length : totalQ}</span>
+            <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{totalQ}</span>
             <span style={{ color: '#475569' }}> 次查询</span>
             <span style={{ color: '#334155', marginLeft: 12, fontSize: 12 }}>
               约 {Math.ceil(totalQ * 0.3)}–{Math.ceil(totalQ * 0.5)} 分钟
@@ -1101,8 +1133,10 @@ interface TaskGroupInit {
   groups: Array<{
     origins: string[]
     destinations: string[]
+    trip_type?: 'one_way' | 'round_trip'
     date_ranges: { start: string; end: string }[]
     specific_dates: string[]
+    return_dates?: string[]
     cabin: string
     label: string
   }>
@@ -1118,7 +1152,9 @@ interface SearchTask {
   groupLabel: string
   origin: string
   destination: string
+  trip_type: string
   dates: string[]
+  return_dates: string[]
   dateRanges: { start: string; end: string }[]
   cabin: string
   status: TaskStatus
@@ -1140,8 +1176,15 @@ function expandRange(start: string, end: string): string[] {
 function expandTaskGroupsToTasks(groups: TaskGroupInit['groups'], datesMode: 'start' | 'endpoints' | 'all'): SearchTask[] {
   const tasks: SearchTask[] = []
   for (const group of groups) {
+    const trip_type = group.trip_type || 'one_way'
     let dates: string[]
-    if (group.specific_dates.length > 0) {
+    let return_dates: string[] = []
+
+    if (trip_type === 'round_trip') {
+      // Round-trip: specific_dates = departures, return_dates = returns (parallel lists)
+      dates = group.specific_dates
+      return_dates = group.return_dates || []
+    } else if (group.specific_dates.length > 0) {
       dates = group.specific_dates
     } else if (group.date_ranges.length > 0) {
       if (datesMode === 'start') {
@@ -1149,12 +1192,12 @@ function expandTaskGroupsToTasks(groups: TaskGroupInit['groups'], datesMode: 'st
       } else if (datesMode === 'endpoints') {
         dates = group.date_ranges.flatMap(r => [r.start, r.end])
       } else {
-        // all: every day in each range
         dates = group.date_ranges.flatMap(r => expandRange(r.start, r.end))
       }
     } else {
       dates = []
     }
+
     for (const origin of group.origins) {
       for (const dest of group.destinations) {
         tasks.push({
@@ -1162,7 +1205,9 @@ function expandTaskGroupsToTasks(groups: TaskGroupInit['groups'], datesMode: 'st
           groupLabel: group.label || CABIN_LABELS[group.cabin] || group.cabin,
           origin,
           destination: dest,
+          trip_type,
           dates,
+          return_dates,
           dateRanges: group.date_ranges,
           cabin: group.cabin,
           status: 'pending',
@@ -1179,110 +1224,111 @@ function expandTaskGroupsToTasks(groups: TaskGroupInit['groups'], datesMode: 'st
 const PARALLEL_ROUTES = 2
 
 function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: TaskGroupInit }) {
-  const initialTasks = expandTaskGroupsToTasks(init.groups, init.datesMode || 'start')
-  const [tasks, setTasks] = useState<SearchTask[]>(initialTasks)
-  const [running, setRunning] = useState(false)
-  const [allFlightsCount, setAllFlightsCount] = useState(0)
-  const [reportId, setReportId] = useState<string | null>(null)
-  const [genRep, setGenRep] = useState(false)
-  const [checkpointId] = useState(`batch-${Date.now().toString(36)}`)
-  const allFlightsRef = useRef<FlightResult[]>([])
-  const checkpointedRef = useRef(0)   // how many flights already checkpointed
-  const abortRef = useRef<AbortController | null>(null)
-  // Snapshot of tasks at the start of a run (avoids stale closure in workers)
-  const tasksSnapshotRef = useRef<SearchTask[]>(initialTasks)
+  // ── Subscribe to module-level store (survives navigation) ──────────────────
+  const [, forceUpdate] = useReducer((x: number) => x + 1, 0)
+  useEffect(() => taskGroupsStore.subscribe(forceUpdate), [])
 
-  const currency = init.currency || 'HKD'
+  // Initialize store on first mount (if store is empty)
+  useEffect(() => {
+    if (!taskGroupsStore.get()) {
+      const cpId = `batch-${Date.now().toString(36)}`
+      const tasks = expandTaskGroupsToTasks(init.groups, init.datesMode || 'start')
+      taskGroupsStore.init(init.title || '批量搜索任务', cpId, tasks as TGTask[])
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Derive render state from store ────────────────────────────────────────
+  const storeState = taskGroupsStore.get()
+  const tasks = (storeState?.tasks ?? []) as SearchTask[]
+  const running = storeState?.running ?? false
+  const allFlightsCount = storeState?.allFlightsCount ?? 0
+  const reportId = storeState?.reportId ?? null
+  const checkpointId = storeState?.checkpointId ?? ''
+
+  const [genRep, setGenRep] = useState(false)
+
+  const currency = init.currency || 'GBP'
   const title = init.title || '批量搜索任务'
   const doneCount = tasks.filter(t => t.status === 'done').length
   const errorCount = tasks.filter(t => t.status === 'error').length
-  const runningCount = tasks.filter(t => t.status === 'running').length
-
-  function updateTask(id: string, patch: Partial<SearchTask>) {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
-  }
-
-  // Checkpoint: only save newly added flights since last checkpoint
-  async function saveCheckpoint() {
-    const all = allFlightsRef.current
-    const newFlights = all.slice(checkpointedRef.current)
-    if (!newFlights.length) return
-    try {
-      const allRanges = [...new Map(
-        init.groups.flatMap(g => g.date_ranges.map(r => [`${r.start}|${r.end}`, r]))
-      ).values()]
-      await fetch(`${backendUrl}/api/search/checkpoint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ checkpoint_id: checkpointId, flights: newFlights, date_ranges: allRanges, title }),
-      })
-      checkpointedRef.current = all.length
-    } catch (e) {
-      console.warn('Checkpoint save failed:', e)
-    }
-  }
-
-  async function runTaskOnce(task: SearchTask): Promise<FlightResult[]> {
-    const collected: FlightResult[] = []
-    const res = await fetch(`${backendUrl}/api/search/classic`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        origin: task.origin, destination: task.destination,
-        dates: task.dates, cabin: task.cabin, currency,
-        trip_type: 'one_way', dry_run: false,
-        weekday_filter: [], show_browser: false,
-      }),
-      signal: abortRef.current!.signal,
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const reader = res.body!.getReader()
-    const dec = new TextDecoder()
-    let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += dec.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        try {
-          const evt: SSEEvent = JSON.parse(line.slice(6))
-          if (evt.type === 'result' && evt.flights?.length) collected.push(...evt.flights)
-        } catch { /* ok */ }
-      }
-    }
-    return collected
-  }
 
   async function startAll() {
-    setRunning(true)
-    abortRef.current = new AbortController()
-    allFlightsRef.current = []
-    checkpointedRef.current = 0
-    setAllFlightsCount(0)
-    setReportId(null)
+    // Re-expand tasks so restarting always starts fresh
+    const cpId = checkpointId || `batch-${Date.now().toString(36)}`
+    const freshTasks = expandTaskGroupsToTasks(init.groups, init.datesMode || 'start')
+    taskGroupsStore.init(title, cpId, freshTasks as TGTask[])
+    const abort = taskGroupsStore.startRun()
 
-    // Reset all tasks and take a snapshot for the worker closures
-    const snapshot = initialTasks.map(t => ({ ...t, status: 'pending' as TaskStatus, flightCount: 0, error: undefined }))
-    tasksSnapshotRef.current = snapshot
-    setTasks(snapshot)
+    // Hook into searchTaskStore so the sidebar blue dot appears
+    searchTaskStore.start(title, () => taskGroupsStore.abort())
 
-    // Shared index across parallel workers (JS is single-threaded so this is safe)
+    const snapshot = freshTasks
+    const allRanges = [...new Map(
+      init.groups.flatMap(g => g.date_ranges.map(r => [`${r.start}|${r.end}`, r]))
+    ).values()]
+
+    async function saveCheckpoint() {
+      const newFlights = taskGroupsStore.getNewFlights()
+      if (!newFlights.length) return
+      try {
+        await fetch(`${backendUrl}/api/search/checkpoint`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ checkpoint_id: cpId, flights: newFlights, date_ranges: allRanges, title }),
+        })
+      } catch (e) {
+        console.warn('Checkpoint save failed:', e)
+      }
+    }
+
+    async function runTaskOnce(task: SearchTask): Promise<object[]> {
+      const collected: object[] = []
+      const res = await fetch(`${backendUrl}/api/search/classic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origin: task.origin, destination: task.destination,
+          dates: task.dates, cabin: task.cabin, currency,
+          trip_type: task.trip_type || 'one_way',
+          return_dates: task.return_dates || [],
+          dry_run: false,
+          weekday_filter: [], show_browser: false,
+        }),
+        signal: abort.signal,
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const reader = res.body!.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const evt = JSON.parse(line.slice(6))
+            if (evt.type === 'result' && evt.flights?.length) collected.push(...evt.flights)
+          } catch { /* ok */ }
+        }
+      }
+      return collected
+    }
+
     let nextIdx = 0
 
     async function worker() {
       while (nextIdx < snapshot.length) {
-        if (abortRef.current!.signal.aborted) break
+        if (abort.signal.aborted) break
         const i = nextIdx++
         const task = snapshot[i]
-        updateTask(task.id, { status: 'running' })
+        taskGroupsStore.updateTask(task.id, { status: 'running' })
 
-        let flights: FlightResult[] = []
+        let flights: object[] = []
         let success = false
 
-        // Try once, then retry once on failure
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             flights = await runTaskOnce(task)
@@ -1290,43 +1336,39 @@ function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: Task
             break
           } catch (err: any) {
             if (err.name === 'AbortError') {
-              updateTask(task.id, { status: 'skipped' })
-              return   // exit this worker
+              taskGroupsStore.updateTask(task.id, { status: 'skipped' })
+              return
             }
             if (attempt === 1) {
-              updateTask(task.id, { status: 'error', error: String(err) })
+              taskGroupsStore.updateTask(task.id, { status: 'error', error: String(err) })
             } else {
-              // brief pause before retry
               await new Promise(r => setTimeout(r, 2000))
             }
           }
         }
 
         if (success) {
-          allFlightsRef.current.push(...flights)
-          setAllFlightsCount(allFlightsRef.current.length)
-          updateTask(task.id, { status: 'done', flightCount: flights.length })
-          // Checkpoint after every completed task
+          taskGroupsStore.addFlights(flights)
+          searchTaskStore.updateFlightCount(taskGroupsStore.get()?.allFlightsCount ?? 0)
+          taskGroupsStore.updateTask(task.id, { status: 'done', flightCount: flights.length })
           await saveCheckpoint()
         }
       }
     }
 
-    // Launch PARALLEL_ROUTES workers simultaneously
     await Promise.all(Array.from({ length: PARALLEL_ROUTES }, worker))
-
-    // Final checkpoint to catch any stragglers
     await saveCheckpoint()
-    setRunning(false)
+    taskGroupsStore.finish()
+    searchTaskStore.finish()
 
-    // Auto-generate report unless the user manually stopped
-    if (!abortRef.current.signal.aborted && allFlightsRef.current.length > 0) {
+    if (!abort.signal.aborted && taskGroupsStore.getFlights().length > 0) {
       await generateReport()
     }
   }
 
   async function generateReport() {
-    if (!allFlightsRef.current.length) return
+    const flights = taskGroupsStore.getFlights()
+    if (!flights.length) return
     setGenRep(true)
     try {
       const allRanges = [...new Map(
@@ -1337,13 +1379,13 @@ function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: Task
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title,
-          flights: allFlightsRef.current,
+          flights,
           date_ranges: allRanges,
           api_key: localStorage.getItem('gemini_api_key') || null,
         }),
       })
       const data = await res.json()
-      setReportId(data.report_id)
+      taskGroupsStore.setReportId(data.report_id)
       window.open(`${backendUrl}/api/report/${data.report_id}/excel`, '_blank')
     } catch (err) {
       console.error('Report gen failed:', err)
@@ -1379,11 +1421,11 @@ function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: Task
             </button>
           ) : (
             <button style={{ ...S.btnPrimary, background: '#7f1d1d' }}
-              onClick={() => abortRef.current?.abort()}>
+              onClick={() => taskGroupsStore.abort()}>
               ■ 停止
             </button>
           )}
-          {allFlightsRef.current.length > 0 && !running && (
+          {allFlightsCount > 0 && !running && (
             <button
               style={{ ...S.btnPrimary, background: 'linear-gradient(135deg,#dc2626,#b91c1c)', opacity: genRep ? 0.6 : 1 }}
               disabled={genRep} onClick={generateReport}>
@@ -1434,12 +1476,14 @@ function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: Task
                 }}>
                   <td style={{ padding: '5px 10px', color: '#334155' }}>{i + 1}</td>
                   <td style={{ padding: '5px 10px', color: '#e2e8f0', fontWeight: t.status === 'running' ? 600 : 400 }}>
-                    {t.origin}→{t.destination}
+                    {t.origin}{t.trip_type === 'round_trip' ? '⇄' : '→'}{t.destination}
                   </td>
                   <td style={{ padding: '5px 10px', color: t.cabin === 'Y' ? '#86efac' : '#93c5fd' }}>
                     {CABIN_LABELS[t.cabin] || t.cabin}
                   </td>
-                  <td style={{ padding: '5px 10px', color: '#475569' }}>{t.dates.length}天</td>
+                  <td style={{ padding: '5px 10px', color: '#475569' }}>
+                    {t.trip_type === 'round_trip' ? `${t.dates.length}对往返` : `${t.dates.length}天`}
+                  </td>
                   <td style={{ padding: '5px 10px', color: statusColor(t.status), fontWeight: 600 }}>
                     {t.status === 'running' && <span style={{ marginRight: 4 }}>⟳</span>}
                     {statusIcon(t.status)} {t.status === 'running' ? '搜索中' :
@@ -1565,10 +1609,13 @@ export default function ClassicSearchPage() {
   const [taskGroupsInit, setTaskGroupsInit] = useState<TaskGroupInit | undefined>(undefined)
   const [initKey, setInitKey] = useState(0)
 
-  // Accept pre-populated config from AI agent navigation
+  // Accept pre-populated config from AI agent navigation, or restore from store after navigation
   useEffect(() => {
     const state = location.state as any
     if (state?.taskGroups) {
+      // New AI-generated task set: reset store and persist the new init
+      taskGroupsStore.clear()
+      taskGroupsStore.setInit(state.taskGroups)
       setTaskGroupsInit(state.taskGroups)
       setMode('batch')
       setInitKey(k => k + 1)
@@ -1580,6 +1627,13 @@ export default function ClassicSearchPage() {
       setSingleInit(state.singleSearch)
       setMode('single')
       setInitKey(k => k + 1)
+    } else {
+      // No navigation state — restore task groups if they were active before navigation
+      const saved = taskGroupsStore.getInit() as TaskGroupInit | null
+      if (saved) {
+        setTaskGroupsInit(saved)
+        setMode('batch')
+      }
     }
   }, [location.state])
 
@@ -1596,7 +1650,7 @@ export default function ClassicSearchPage() {
             <p style={S.subtitle}>AI规划任务 · 自动检查点 · 完成后生成报告</p>
           </div>
           <button style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid #334155', color: '#64748b', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
-            onClick={() => setTaskGroupsInit(undefined)}>
+            onClick={() => { taskGroupsStore.clear(); taskGroupsStore.setInit(null); setTaskGroupsInit(undefined) }}>
             ← 返回手动模式
           </button>
         </div>

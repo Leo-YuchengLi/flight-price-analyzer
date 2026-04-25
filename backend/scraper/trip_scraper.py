@@ -26,6 +26,13 @@ try:
 except ImportError:
     HAS_STEALTH = False
 
+from scraper.cities import AIRPORT_TO_CITY
+
+
+def _to_city(code: str, fallback: str) -> str:
+    """Normalize airport code (LHR, PEK) → city code (LON, BJS). Pass-through if already city."""
+    return AIRPORT_TO_CITY.get(code.upper(), code) if code else fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +76,8 @@ def _make_mock(origin: str, destination: str, date: str,
 # ── SSE parser ────────────────────────────────────────────────────────────────
 
 def _parse_sse_events(body: str, origin: str, dest: str, date: str,
-                      cabin: str, currency: str) -> list[dict]:
+                      cabin: str, currency: str,
+                      return_date: str = "") -> list[dict]:
     """Parse the complete SSE body → flight list."""
     events: list[dict] = []
     for block in body.split("\n\n"):
@@ -83,12 +91,15 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
     flights: list[dict] = []
     seen: set[str] = set()
 
+    is_round_trip = bool(return_date)
+
     for ev in events:
         airline_map = {a["code"]: a["name"]
                        for a in ev.get("airlineList") or []
                        if a.get("code")}
         for item in ev.get("itineraryList") or []:
-            journey = (item.get("journeyList") or [{}])[0]
+            journey_list = item.get("journeyList") or [{}]
+            journey = journey_list[0]
             sections = journey.get("transSectionList") or []
             if not sections:
                 continue
@@ -102,20 +113,24 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
                 dep_dt = s.get("departDateTime", "")
                 arr_dt = s.get("arriveDateTime", "")
 
-                # Use actualAirlineCode (marketing/codeshare carrier) when available,
-                # e.g. LH7322 operated by LH but sold as CA966 → actualAirlineCode=CA
-                op_code     = fi.get("airlineCode", "")
-                actual_code = fi.get("actualAirlineCode") or op_code
-                share_fno   = fi.get("shareFlightNo") or ""
-                flight_no   = share_fno or fi.get("flightNo", "")
+                # airline_code  = marketing/ticketing carrier (actualAirlineCode)
+                #   → used for matrix column assignment (CA-sold ticket → CA column)
+                # airline (name) = operating carrier
+                #   → used for display ("Lufthansa", "Air China", etc.)
+                # Flight-level airline = all distinct operating carriers joined
+                #   → produces "Lufthansa, Air China" when segments differ
+                op_code      = fi.get("airlineCode", "")
+                mkt_code     = fi.get("actualAirlineCode") or op_code
+                share_fno    = fi.get("shareFlightNo") or ""
+                flight_no    = share_fno or fi.get("flightNo", "")
 
                 segs.append({
-                    "airline":          airline_map.get(actual_code, actual_code),
-                    "airline_code":     actual_code,
-                    "operating_code":   op_code,   # keep for reference
+                    "airline":          airline_map.get(op_code, op_code),  # operating name for display
+                    "airline_code":     mkt_code,   # marketing code for column assignment
+                    "operating_code":   op_code,    # keep for reference
                     "flight_number":    flight_no,
-                    "origin":           dep_pt.get("cityCode", origin),
-                    "destination":      arr_pt.get("cityCode", dest),
+                    "origin":           _to_city(dep_pt.get("cityCode", ""), origin),
+                    "destination":      _to_city(arr_pt.get("cityCode", ""), dest),
                     "departure_time":   dep_dt[11:16] if len(dep_dt) >= 16 else dep_dt,
                     "arrival_time":     arr_dt[11:16] if len(arr_dt) >= 16 else arr_dt,
                     "departure_date":   dep_dt[:10]   if len(dep_dt) >= 10 else date,
@@ -138,14 +153,71 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
             dur_min = journey.get("duration") or 0
             h, m = divmod(int(dur_min), 60)
             stops = max(0, len(sections) - 1)
+            # main_code = first segment's marketing code → determines which matrix column
+            # main_name = all distinct OPERATING airline names joined
+            #   e.g. first seg LH-operated CA-marketed + second seg CA-operated CA-marketed
+            #        → main_code=CA (CA column), main_name="Lufthansa, Air China"
             main_code = segs[0]["airline_code"] if segs else ""
-            main_name = segs[0]["airline"] if segs else ""
+            seen_op_names: list[str] = []
+            for s in segs:
+                name = s["airline"]   # operating carrier name
+                if name not in seen_op_names:
+                    seen_op_names.append(name)
+            main_name = ", ".join(seen_op_names) if seen_op_names else ""
+
+            # Parse return leg if this is a round-trip package result
+            ret_segs: list[dict] = []
+            ret_main_code = ""
+            ret_main_name = ""
+            ret_duration = ""
+            if is_round_trip and len(journey_list) >= 2:
+                ret_journey = journey_list[1]
+                ret_sections = ret_journey.get("transSectionList") or []
+                for s in ret_sections:
+                    dep_pt = s.get("departPoint") or {}
+                    arr_pt = s.get("arrivePoint") or {}
+                    fi = s.get("flightInfo") or {}
+                    craft = fi.get("craftInfo") or {}
+                    dep_dt = s.get("departDateTime", "")
+                    arr_dt = s.get("arriveDateTime", "")
+                    op_code      = fi.get("airlineCode", "")
+                    mkt_code     = fi.get("actualAirlineCode") or op_code
+                    share_fno    = fi.get("shareFlightNo") or ""
+                    flight_no    = share_fno or fi.get("flightNo", "")
+                    ret_segs.append({
+                        "airline":        airline_map.get(op_code, op_code),  # operating name
+                        "airline_code":   mkt_code,   # marketing code for column assignment
+                        "operating_code": op_code,
+                        "flight_number":  flight_no,
+                        "origin":         _to_city(dep_pt.get("cityCode", ""), dest),
+                        "destination":    _to_city(arr_pt.get("cityCode", ""), origin),
+                        "departure_time": dep_dt[11:16] if len(dep_dt) >= 16 else dep_dt,
+                        "arrival_time":   arr_dt[11:16] if len(arr_dt) >= 16 else arr_dt,
+                        "departure_date": dep_dt[:10]   if len(dep_dt) >= 10 else return_date,
+                        "arrival_date":   arr_dt[:10]   if len(arr_dt) >= 10 else return_date,
+                        "aircraft":       craft.get("shortName") or craft.get("name", ""),
+                    })
+                if ret_segs:
+                    ret_main_code = ret_segs[0]["airline_code"]  # marketing code
+                    ret_seen_op: list[str] = []
+                    for s in ret_segs:
+                        name = s["airline"]  # operating name
+                        if name not in ret_seen_op:
+                            ret_seen_op.append(name)
+                    ret_main_name = ", ".join(ret_seen_op) if ret_seen_op else ""
+                ret_dur_min = ret_journey.get("duration") or 0
+                rh, rm = divmod(int(ret_dur_min), 60)
+                ret_duration = f"{rh}h {rm:02d}m" if ret_dur_min else ""
 
             # Build a dedup key from airline+flight codes.
             # Fallback: if all codes are empty (some Trip.com responses omit them),
             # use departure times so we don't collapse all flights into one entry.
             uid = "|".join(f"{s['airline_code']}{s['flight_number']}" for s in segs)
-            if not uid.replace("|", ""):
+            if is_round_trip and ret_segs:
+                uid += "|ret:" + "|".join(
+                    f"{s['airline_code']}{s['flight_number']}" for s in ret_segs
+                )
+            if not uid.replace("|", "").replace("ret:", ""):
                 uid = "t|" + "|".join(
                     f"{s.get('departure_date','')}{s.get('departure_time','')}"
                     for s in segs
@@ -154,13 +226,20 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
                 continue
             seen.add(uid)
 
+            trip_type_val = "round_trip" if is_round_trip else "one_way"
             flights.append({
                 "origin": origin, "destination": dest, "departure_date": date,
-                "trip_type": "one_way",
+                "trip_type": trip_type_val,
                 "segments": segs, "stops": stops, "is_direct": stops == 0,
                 "total_duration": f"{h}h {m:02d}m" if dur_min else "",
                 "airline": main_name, "airline_code": main_code,
                 "price": price, "currency": currency, "cabin": cabin,
+                # Return leg fields (round_trip only)
+                "return_date": return_date if is_round_trip else "",
+                "return_segments": ret_segs,
+                "return_airline": ret_main_name,
+                "return_airline_code": ret_main_code,
+                "return_duration": ret_duration,
                 "scraped_at": datetime.now().isoformat(), "source_url": "hk.trip.com",
             })
 
@@ -277,6 +356,7 @@ class TripScraper:
         cabin: str = "Y",
         currency: str = "HKD",
         trip_type: str = "one_way",
+        return_date: str = "",
         dry_run: bool = False,
         on_progress: Callable[[str], None] | None = None,
     ) -> list[dict]:
@@ -286,16 +366,27 @@ class TripScraper:
 
         assert self._browser, "Call start() first"
 
+        is_round_trip = trip_type == "round_trip" and bool(return_date)
+        arrow = "⇄" if is_round_trip else "→"
         if on_progress:
-            on_progress(f"Scraping {origin}→{destination} {date}…")
+            on_progress(f"Scraping {origin}{arrow}{destination} {date}…")
 
-        cabin_map = {"Y": "y", "C": "c", "F": "f"}
-        search_url = (
-            f"https://hk.trip.com/flights/showfarefirst"
-            f"?dcity={origin.lower()}&acity={destination.lower()}&ddate={date}"
-            f"&triptype=ow&class={cabin_map.get(cabin, 'y')}&quantity=1"
-            f"&nonstoponly=off&locale=en-HK&curr={currency}"
-        )
+        cabin_map = {"Y": "y", "W": "w", "C": "c", "F": "f"}
+        if is_round_trip:
+            search_url = (
+                f"https://hk.trip.com/flights/showfarefirst"
+                f"?dcity={origin.lower()}&acity={destination.lower()}"
+                f"&ddate={date}&rdate={return_date}"
+                f"&triptype=rt&class={cabin_map.get(cabin, 'y')}&quantity=1"
+                f"&nonstoponly=off&locale=en-HK&curr={currency}"
+            )
+        else:
+            search_url = (
+                f"https://hk.trip.com/flights/showfarefirst"
+                f"?dcity={origin.lower()}&acity={destination.lower()}&ddate={date}"
+                f"&triptype=ow&class={cabin_map.get(cabin, 'y')}&quantity=1"
+                f"&nonstoponly=off&locale=en-HK&curr={currency}"
+            )
 
         # Limit concurrent pages to 2 while allowing parallel route searches.
         async with self._page_sem:
@@ -359,7 +450,9 @@ class TripScraper:
             return []
 
         full_body = "\n\n".join(sse_bodies)
-        flights = _parse_sse_events(full_body, origin, destination, date, cabin, currency)
-        logger.info("Scraped %d flights for %s→%s %s (from %d SSE response(s))",
-                    len(flights), origin, destination, date, len(sse_bodies))
+        flights = _parse_sse_events(full_body, origin, destination, date,
+                                    cabin, currency, return_date=return_date)
+        arrow = "⇄" if is_round_trip else "→"
+        logger.info("Scraped %d flights for %s%s%s %s (from %d SSE response(s))",
+                    len(flights), origin, arrow, destination, date, len(sse_bodies))
         return flights

@@ -11,7 +11,7 @@ class ClassicSearchRequest(BaseModel):
     origin: str = Field(..., description="IATA city/airport code, e.g. LON")
     destination: str = Field(..., description="IATA city/airport code, e.g. BJS")
     dates: list[str] = Field(..., description="ISO date strings, e.g. ['2026-06-01']")
-    cabin: Literal["Y", "C", "F"] = "Y"
+    cabin: Literal["Y", "W", "C", "F"] = "Y"
     currency: Literal["EUR", "USD", "CNY", "GBP", "HKD"] = "EUR"
     trip_type: Literal["one_way", "round_trip"] = "one_way"
     return_dates: list[str] = Field(default_factory=list, description="For round_trip: return leg dates")
@@ -41,7 +41,7 @@ class FlightResult(BaseModel):
     origin: str                # city IATA
     destination: str
     departure_date: str        # first leg date
-    trip_type: str
+    trip_type: str             # "one_way" | "round_trip"
 
     # Route info
     segments: list[FlightSegment]
@@ -53,10 +53,17 @@ class FlightResult(BaseModel):
     airline: str
     airline_code: str
 
-    # Price
+    # Price (round_trip: total package price; one_way: single leg price)
     price: float
     currency: str
     cabin: str
+
+    # Return leg (round_trip only)
+    return_date: str = ""
+    return_segments: list[FlightSegment] = Field(default_factory=list)
+    return_airline: str = ""
+    return_airline_code: str = ""
+    return_duration: str = ""
 
     # Meta
     scraped_at: str = ""

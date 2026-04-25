@@ -7,7 +7,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
-CABIN_LABEL = {"Y": "经济舱", "C": "商务舱", "F": "头等舱"}
+CABIN_LABEL = {"Y": "经济舱", "W": "超级经济舱", "C": "商务舱", "F": "头等舱"}
 
 
 def build_html(

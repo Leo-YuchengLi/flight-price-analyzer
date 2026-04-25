@@ -69,6 +69,9 @@ export default function AnalysisPage() {
   const [generatingOutline, setGeneratingOutline] = useState(false)
   const [genStatus, setGenStatus]         = useState('')
 
+  // Cache merged flights between outline and generate steps (avoids double fetch)
+  const mergedFlightsCache = useRef<{ flights: object[]; date_ranges: object[] } | null>(null)
+
   // Use a ref to accumulate streamed HTML (avoids stale-closure bug)
   const streamedHtmlRef = useRef('')
   const [streamedHtmlDisplay, setStreamedHtmlDisplay] = useState('')
@@ -219,6 +222,7 @@ export default function AnalysisPage() {
     streamedHtmlRef.current = ''
     setStreamedHtmlDisplay('')
     setGenStatus('')
+    mergedFlightsCache.current = null
     try {
       const res = await fetch(`${backendUrl}/api/report/list`)
       setReports(await res.json())
@@ -232,13 +236,15 @@ export default function AnalysisPage() {
   //  2. Auto-infer date_ranges for any report that has none (e.g. single-route
   //     searches, weekday-filtered searches).  Without this, those flights would
   //     fall outside every range and be silently dropped by the analytics engine.
-  //  3. Deduplicate: same itinerary (origin, dest, date, airline, cabin, stops)
-  //     → keep the lower price.
+  //  3. Deduplicate: same itinerary fingerprint (trip_type + route + dates +
+  //     airline + cabin + stops) → keep the lower price.
+  //     IMPORTANT: trip_type and return_date are part of the key so that
+  //     one-way and round-trip data are NEVER collapsed into each other.
 
   // Cluster a sorted list of dates into contiguous weekly windows.
   // Dates within 8 days of each other belong to the same cluster.
   function inferDateRanges(flights: any[]): { start: string; end: string }[] {
-    const dates = [...new Set<string>(flights.map((f: any) => f.departure_date))].sort()
+    const dates = [...new Set<string>(flights.map((f: any) => f.departure_date).filter(Boolean))].sort()
     if (!dates.length) return []
     const clusters: string[][] = [[dates[0]]]
     for (let i = 1; i < dates.length; i++) {
@@ -250,7 +256,19 @@ export default function AnalysisPage() {
     return clusters.map(c => ({ start: c[0], end: c[c.length - 1] }))
   }
 
-  async function fetchMergedFlights(): Promise<{ flights: object[]; date_ranges: object[]; rawCount: number }> {
+  // Remove ranges that are entirely contained within another range (deduplication).
+  function deduplicateRanges(ranges: { start: string; end: string }[]): { start: string; end: string }[] {
+    const sorted = [...ranges].sort((a, b) => a.start.localeCompare(b.start) || b.end.localeCompare(a.end))
+    const result: { start: string; end: string }[] = []
+    for (const r of sorted) {
+      // Skip if already covered by a wider range in result
+      const covered = result.some(e => e.start <= r.start && e.end >= r.end)
+      if (!covered) result.push(r)
+    }
+    return result
+  }
+
+  async function fetchMergedFlights(): Promise<{ flights: object[]; date_ranges: object[]; rawCount: number; tripTypeCounts: Record<string, number> }> {
     let rawFlights: any[] = []
     const seenRanges = new Set<string>()
     const mergedRanges: { start: string; end: string }[] = []
@@ -277,16 +295,21 @@ export default function AnalysisPage() {
 
     const rawCount = rawFlights.length
 
-    // Deduplicate: keep the lowest-price record per itinerary fingerprint
+    // Deduplicate: keep the lowest-price record per itinerary fingerprint.
+    // KEY includes trip_type + return_date so round-trips and one-ways are
+    // NEVER collapsed — they are distinct products with incomparable prices.
     const best = new Map<string, any>()
     for (const f of rawFlights) {
-      const key = `${f.origin}|${f.destination}|${f.departure_date}|${f.airline_code}|${f.cabin}|${f.stops ?? 0}`
+      const tripType  = f.trip_type  ?? 'one_way'
+      const returnDt  = f.return_date ?? ''
+      const key = `${tripType}|${f.origin}|${f.destination}|${f.departure_date}|${returnDt}|${f.airline_code}|${f.cabin}|${f.stops ?? 0}`
       const existing = best.get(key)
-      if (!existing || f.price < existing.price) best.set(key, f)
+      if (!existing || (f.price > 0 && (!existing.price || f.price < existing.price))) best.set(key, f)
     }
 
-    // Sort ranges chronologically for clean period columns in the report
+    // Sort ranges chronologically; remove sub-ranges already covered by wider ones
     mergedRanges.sort((a, b) => a.start.localeCompare(b.start))
+    const cleanRanges = deduplicateRanges(mergedRanges)
 
     const deduped = [...best.values()]
 
@@ -296,7 +319,14 @@ export default function AnalysisPage() {
       console.warn(`混合货币: ${[...currencies].join(', ')} — 价格将自动折算为主要货币`)
     }
 
-    return { flights: deduped, date_ranges: mergedRanges, rawCount }
+    // Trip-type breakdown for display
+    const tripTypeCounts: Record<string, number> = {}
+    for (const f of deduped) {
+      const tt = f.trip_type ?? 'one_way'
+      tripTypeCounts[tt] = (tripTypeCounts[tt] ?? 0) + 1
+    }
+
+    return { flights: deduped, date_ranges: cleanRanges, rawCount, tripTypeCounts }
   }
 
   // ── Creation: generate outline ─────────────────────────────────────────────
@@ -304,7 +334,7 @@ export default function AnalysisPage() {
   async function handleGenerateOutline() {
     if (selectedIds.length === 0) return
     setGeneratingOutline(true)
-    const { flights, date_ranges, rawCount } = await fetchMergedFlights()
+    const { flights, date_ranges, rawCount, tripTypeCounts } = await fetchMergedFlights()
 
     if (flights.length === 0) {
       alert('选中的报告无原始航班数据（旧报告不含此数据）。\n请重新在"搜索 & 抓取"页生成报告后再分析。')
@@ -317,7 +347,6 @@ export default function AnalysisPage() {
     const autoTitle = selectedTitles.length === 1
       ? selectedTitles[0]
       : (() => {
-          // Find longest common prefix across titles
           const prefix = selectedTitles.reduce((a, b) => {
             let i = 0
             while (i < a.length && i < b.length && a[i] === b[i]) i++
@@ -327,9 +356,11 @@ export default function AnalysisPage() {
         })()
     const title = modalTitle || autoTitle
 
-    if (rawCount !== flights.length) {
-      console.log(`合并去重: ${rawCount} → ${flights.length} 条航班记录`)
-    }
+    const ow = tripTypeCounts['one_way'] ?? 0
+    const rt = tripTypeCounts['round_trip'] ?? 0
+    console.log(`合并结果: 原始${rawCount}条 → 去重后${flights.length}条 (单程${ow} / 往返${rt})`)
+    // Cache so handleGenerateReport doesn't need to re-fetch
+    mergedFlightsCache.current = { flights, date_ranges }
     setModalTitle(title)
 
     try {
@@ -361,7 +392,8 @@ export default function AnalysisPage() {
     streamedHtmlRef.current = ''
     setStreamedHtmlDisplay('')
     setGenStatus('正在生成分析报告，请稍候…')
-    const { flights, date_ranges } = await fetchMergedFlights()
+    // Reuse cached result from outline step to avoid double-fetching
+    const { flights, date_ranges } = mergedFlightsCache.current ?? await fetchMergedFlights()
 
     let finalId = ''
     let buf = ''

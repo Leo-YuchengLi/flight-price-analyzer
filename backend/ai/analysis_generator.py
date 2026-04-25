@@ -36,9 +36,11 @@ NARRATIVE_PROMPT = """你是国航（Air China）商务/收益管理分析师。
 """
 
 RECOMMENDATIONS_PROMPT = """你是国航（Air China）收益管理顾问。
-根据以下竞争力数据，写一份简洁的战略建议（约200-300字，中文，HTML格式）。
+根据以下竞争力数据，写一份简洁的战略建议（约250-350字，中文，HTML格式）。
 
-格式：用<p>分段，关键词用<strong>，建议项用有序列表<ol><li>，不超过5条建议。
+格式：用<p>分段，关键词用<strong>，建议项用有序列表<ol><li>，不超过6条建议。
+如果数据中混合了往返和单程票价，请在建议中特别说明应分开分析。
+如果有无国航数据的航线，请指出这些航线的市场机会。
 不要用markdown，不要输出说明文字，直接输出HTML片段。
 
 数据摘要：
@@ -66,7 +68,34 @@ def _make_client(api_key: str | None = None) -> genai.Client:
 
 def _build_summary(analytics: dict) -> str:
     """Compact text summary for recommendations prompt."""
-    lines = [f"币种: {analytics.get('currency', 'HKD')}"]
+    currency = analytics.get('currency', 'GBP')
+    lines = [f"币种: {currency}"]
+
+    # ── Data coverage context ────────────────────────────────────────────────
+    cov = analytics.get("coverage", {})
+    if cov:
+        total_f = cov.get("total_flights", 0)
+        tt      = cov.get("trip_type_counts", {})
+        ow      = tt.get("one_way", 0)
+        rt      = tt.get("round_trip", 0)
+        direct  = cov.get("direct_count", 0)
+        conn    = cov.get("connecting_count", 0)
+        no_ca   = cov.get("routes_without_ca", [])
+        lines.append(
+            f"数据覆盖: 共{total_f}条记录, "
+            f"单程{ow}条/往返{rt}条, "
+            f"直飞{direct}条/中转{conn}条"
+        )
+        lines.append(
+            f"航线覆盖: 共{cov.get('total_routes', 0)}条航线, "
+            f"国航有数据{cov.get('ca_routes_count', 0)}条"
+        )
+        if no_ca:
+            lines.append(f"⚠ 以下航线无国航数据（市场机会）: {', '.join(no_ca[:10])}")
+        if ow > 0 and rt > 0:
+            lines.append("⚠ 数据混合了单程和往返票价，往返价格不可与单程直接比较")
+
+    # ── Per-cabin analytics ──────────────────────────────────────────────────
     for code, cd in analytics.get("cabins", {}).items():
         label = cd.get("label", code)
         total = cd.get("total_combos", 0)
@@ -90,6 +119,15 @@ def _build_summary(analytics: dict) -> str:
         )[:5]
         for (i, rt, per, ca_p, mm, ma) in highs:
             lines.append(f"  ⚠ {rt} {per}: CA={ca_p}, 最低={mm}({ma}), 指数={i}")
+
+        # Routes with no CA data (market gaps)
+        missing_ca_routes = [
+            r["route"] for r in cd.get("routes", [])
+            if all(p.get("ca") is None for p in r.get("periods", []))
+        ]
+        if missing_ca_routes:
+            lines.append(f"  国航无报价航线: {', '.join(missing_ca_routes[:5])}")
+
     return "\n".join(lines)
 
 
@@ -104,20 +142,42 @@ async def generate_outline(
     """Return a brief outline (just lists the main sections that will be generated)."""
     analytics = compute_ca_analytics(flights, date_ranges=date_ranges)
     cabins    = analytics.get("cabins", {})
+    cov       = analytics.get("coverage", {})
+
     lines = [
         f"# {title}",
         "",
-        "## 报告结构",
+        "## 数据概况",
         "",
     ]
+
+    # Coverage summary
+    if cov:
+        tt  = cov.get("trip_type_counts", {})
+        ow  = tt.get("one_way", 0)
+        rt  = tt.get("round_trip", 0)
+        lines.append(f"- 总记录: {cov.get('total_flights', 0)} 条（单程 {ow} / 往返 {rt}）")
+        lines.append(f"- 直飞: {cov.get('direct_count', 0)} 条，中转: {cov.get('connecting_count', 0)} 条")
+        lines.append(f"- 航线覆盖: {cov.get('total_routes', 0)} 条，国航有报价: {cov.get('ca_routes_count', 0)} 条")
+        no_ca = cov.get("routes_without_ca", [])
+        if no_ca:
+            lines.append(f"- ⚠ 无国航数据的航线: {', '.join(no_ca[:8])}")
+        if ow > 0 and rt > 0:
+            lines.append("- ⚠ 数据混合单程和往返，报告将分别呈现")
+        lines.append("")
+
+    lines += ["## 报告结构", ""]
     for code, cd in cabins.items():
         label = cd.get("label", code)
         total = cd.get("total_combos", 0)
         idx   = cd.get("ca_avg_index", 0) or 0
         hi    = sum(1 for r in cd.get("routes", []) for p in r.get("periods", []) if (p.get("ca_index") or 0) > 130)
+        missing = sum(1 for r in cd.get("routes", []) if all(p.get("ca") is None for p in r.get("periods", [])))
         lines.append(f"### {label}（{total}组）")
         lines.append(f"- 平均价格指数: {idx}，高溢价预警: {hi}处")
         lines.append(f"- 航线数: {len(cd.get('routes', []))}")
+        if missing:
+            lines.append(f"- 国航无报价航线: {missing} 条（将在市场机会章节呈现）")
         lines.append("")
 
     route_count = sum(len(cd.get("routes", [])) for cd in cabins.values())
@@ -127,8 +187,9 @@ async def generate_outline(
         f"2. 竞争力解读（AI 生成）",
         f"3. 按航线价格对比表（{route_count} 条航线，含颜色编码）",
         f"4. 高溢价预警 & 价格竞争力强的航线",
-        f"5. AI 战略建议",
-        f"6. 更专业的分析方法 & 方法论说明",
+        f"5. 市场机会（无国航数据的航线分析）",
+        f"6. AI 战略建议",
+        f"7. 分析方法论说明",
         "",
         "---",
         "报告将以结构化 HTML 格式生成，表格含颜色编码，可直接下载查阅。",

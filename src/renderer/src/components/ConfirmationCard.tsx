@@ -4,9 +4,11 @@ import { useNavigate } from 'react-router-dom'
 export interface TaskGroup {
   origins: string[]
   destinations: string[]
+  trip_type?: 'one_way' | 'round_trip'
   date_ranges: { start: string; end: string }[]
   specific_dates: string[]
-  cabin: 'Y' | 'C' | 'F'
+  return_dates?: string[]
+  cabin: 'Y' | 'W' | 'C' | 'F'
   label: string
 }
 
@@ -36,7 +38,7 @@ interface Props {
   onAdjust: () => void
 }
 
-const CABIN_LABEL: Record<string, string> = { Y: '经济舱', C: '商务舱', F: '头等舱' }
+const CABIN_LABEL: Record<string, string> = { Y: '经济舱', W: '超级经济舱', C: '商务舱', F: '头等舱' }
 const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY']
 const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -110,7 +112,7 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
   const navigate = useNavigate()
   const [filterCabin, setFilterCabin] = useState<string>('all')
   const [selected, setSelected] = useState<boolean[]>(() => intent.task_groups.map(() => true))
-  const [currency, setCurrency] = useState('HKD')
+  const [currency, setCurrency] = useState('GBP')
   const [datesMode, setDatesMode] = useState<'start' | 'endpoints' | 'all'>('endpoints')
 
   const groups = intent.task_groups
@@ -135,9 +137,11 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
   const datesPerRange = datesMode === 'start' ? 1 : datesMode === 'endpoints' ? 2 : avgRangeLen
   const totalTasks = selectedGroups.reduce((acc, g) => {
     const routes = g.origins.length * g.destinations.length
-    const dates = g.date_ranges.length > 0
-      ? g.date_ranges.length * datesPerRange
-      : g.specific_dates.length
+    const dates = g.trip_type === 'round_trip'
+      ? g.specific_dates.length   // RT: each pair = 1 package search
+      : g.date_ranges.length > 0
+        ? g.date_ranges.length * datesPerRange
+        : g.specific_dates.length
     return acc + routes * dates
   }, 0)
 
@@ -179,6 +183,7 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
           }}>
             {c === 'all' ? `全部 (${groups.length})` :
              c === 'Y' ? `经济舱 (${cabinCounts[c]}条)` :
+             c === 'W' ? `超级经济舱 (${cabinCounts[c]}条)` :
              c === 'C' ? `公务舱 (${cabinCounts[c]}条)` : `头等舱 (${cabinCounts[c]}条)`}
           </button>
         ))}
@@ -213,18 +218,27 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
                     background: cc.bg, color: cc.text,
                   }}>{CABIN_LABEL[g.cabin]}</span>
                   <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>
-                    {g.origins[0]} → {routeCount}条航线
+                    {g.origins[0]} {g.trip_type === 'round_trip' ? '⇄' : '→'} {routeCount}条航线
                   </span>
+                  {g.trip_type === 'round_trip' && (
+                    <span style={{ fontSize: 10, color: '#60a5fa', background: '#172554', padding: '1px 6px', borderRadius: 8 }}>往返</span>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {destPreview}
                 </div>
                 <div style={{ fontSize: 11, color: '#334155', marginTop: 2 }}>
-                  {g.date_ranges.length}个时间段：{g.date_ranges.map(r => `${r.start.slice(5)}~${r.end.slice(5)}`).join('，')}
+                  {g.trip_type === 'round_trip' && g.specific_dates.length > 0
+                    ? `${g.specific_dates.length}个往返日期对：${g.specific_dates.map((d, i) => `${d.slice(5)} ⇄ ${(g.return_dates?.[i] || '').slice(5)}`).join('，')}`
+                    : g.date_ranges.length > 0
+                      ? `${g.date_ranges.length}个时间段：${g.date_ranges.map(r => `${r.start.slice(5)}~${r.end.slice(5)}`).join('，')}`
+                      : `${g.specific_dates.length}个日期：${g.specific_dates.join('，')}`}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: '#475569', flexShrink: 0, textAlign: 'right' }}>
-                {routeCount * (g.date_ranges.length > 0 ? g.date_ranges.length * datesPerRange : g.specific_dates.length)}次
+                {g.trip_type === 'round_trip'
+                  ? routeCount * g.specific_dates.length
+                  : routeCount * (g.date_ranges.length > 0 ? g.date_ranges.length * datesPerRange : g.specific_dates.length)}次
               </div>
             </div>
           )
@@ -232,7 +246,9 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
       </div>
 
       {/* Options */}
+      {/* datesMode selector only for groups with date_ranges (one-way). RT groups use fixed date pairs. */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10, flexWrap: 'wrap' }}>
+        {groups.some(g => g.trip_type !== 'round_trip' && g.date_ranges.length > 0) && (
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>每个时间段搜索哪些日期？</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -263,6 +279,7 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
             </div>
           )}
         </div>
+        )}
         <div style={{ flexShrink: 0 }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>币种</div>
           <select style={{ ...S.select, width: 80 }} value={currency} onChange={e => setCurrency(e.target.value)}>
@@ -338,9 +355,9 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
   const [returnDateEnd, setReturnDateEnd]     = useState(intent.return_date_end || '')
 
   const [cabins, setCabins]     = useState<Record<string,boolean>>(
-    Object.fromEntries(['Y','C','F'].map(c => [c, intent.cabins.includes(c)]))
+    Object.fromEntries(['Y','W','C','F'].map(c => [c, intent.cabins.includes(c)]))
   )
-  const [currency, setCurrency] = useState(intent.currency || 'HKD')
+  const [currency, setCurrency] = useState(intent.currency || 'GBP')
   const [loading, setLoading]   = useState(false)
 
   const selectedCabins = Object.keys(cabins).filter(k => cabins[k])
@@ -538,7 +555,7 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
       {/* Cabins */}
       <Row label="舱位" icon="💺">
         <div style={{ display: 'flex', gap: 10 }}>
-          {['Y','C','F'].map(c => (
+          {['Y','W','C','F'].map(c => (
             <label key={c} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 13 }}>
               <input type="checkbox" checked={!!cabins[c]}
                 onChange={e => setCabins(prev => ({ ...prev, [c]: e.target.checked }))} />

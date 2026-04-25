@@ -254,6 +254,69 @@ def _route_table(route_data: dict, currency: str) -> str:
 
 # ── Warnings & opportunities ──────────────────────────────────────────────────
 
+def _coverage_section(cov: dict) -> str:
+    """Data coverage summary + market gaps (routes without CA data)."""
+    if not cov:
+        return ""
+
+    total_f = cov.get("total_flights", 0)
+    tt      = cov.get("trip_type_counts", {})
+    ow      = tt.get("one_way", 0)
+    rt      = tt.get("round_trip", 0)
+    direct  = cov.get("direct_count", 0)
+    conn    = cov.get("connecting_count", 0)
+    n_total = cov.get("total_routes", 0)
+    n_ca    = cov.get("ca_routes_count", 0)
+    no_ca   = cov.get("routes_without_ca", [])
+
+    # Mixed data warning
+    mixed_warn = ""
+    if ow > 0 and rt > 0:
+        mixed_warn = (
+            f'<p style="margin:8px 0;color:#b45309;background:#fef3c7;'
+            f'padding:8px 12px;border-radius:6px;font-size:12.5px">'
+            f'⚠ <strong>数据混合警告：</strong>本报告包含单程（{ow}条）和往返（{rt}条）票价。'
+            f'往返价格为来回打包价，<strong>不应与单程价格直接比较</strong>。'
+            f'建议分别对单程和往返数据生成独立报告以获得准确分析。</p>'
+        )
+
+    # Market gap: routes without CA data
+    gap_html = ""
+    if no_ca:
+        lis = "".join(
+            f'<li style="display:inline-block;margin:3px 6px 3px 0;padding:3px 10px;'
+            f'background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;font-size:12px">'
+            f'{r}</li>'
+            for r in no_ca[:20]
+        )
+        gap_html = f"""
+<h3 style="color:#0369a1;font-size:14px;margin:14px 0 8px">🔵 市场机会（无国航报价航线）</h3>
+<p style="font-size:12px;color:#6b7280;margin-bottom:6px">
+  以下 {len(no_ca)} 条航线有竞争对手数据但国航未出现，可能是潜在布局或加班机会：
+</p>
+<ul style="list-style:none;padding:0">{lis}</ul>"""
+
+    return f"""
+<div class="section">
+  <div class="section-title">📊 数据覆盖概况</div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
+    <div style="font-size:13px;color:#374151">
+      <strong>总记录：</strong>{total_f} 条 &nbsp;|&nbsp;
+      <strong>单程：</strong>{ow} &nbsp;/&nbsp; <strong>往返：</strong>{rt}
+    </div>
+    <div style="font-size:13px;color:#374151">
+      <strong>直飞：</strong>{direct} 条 &nbsp;|&nbsp; <strong>中转：</strong>{conn} 条
+    </div>
+    <div style="font-size:13px;color:#374151">
+      <strong>航线覆盖：</strong>{n_total} 条，国航有报价 {n_ca} 条
+      {"，<span style='color:#dc2626'>" + str(len(no_ca)) + " 条无国航数据</span>" if no_ca else ""}
+    </div>
+  </div>
+  {mixed_warn}
+  {gap_html}
+</div>"""
+
+
 def _warnings_section(cabins: dict, currency: str) -> str:
     high_items, low_items, missing = [], [], 0
 
@@ -376,8 +439,9 @@ def build_analysis_html(
     ai_narratives   : {cabin_code: "narrative text"} for 竞争力解读 per cabin
     ai_recommendations: HTML string for strategic recommendations section
     """
-    currency = analytics.get("currency", "HKD")
+    currency = analytics.get("currency", "GBP")
     cabins   = analytics.get("cabins", {})
+    cov      = analytics.get("coverage", {})
 
     # ── Cabin tabs ────────────────────────────────────────────────────────────
     first_cabin  = next(iter(cabins), None)
@@ -484,6 +548,7 @@ def build_analysis_html(
     <h1>✈️ {title}</h1>
     <div class="sub">
       中国国航视角 · 币种 {currency} · 仅含直飞与经停1次 · 按舱等分区分析
+      {"· <span style='color:#b45309'>⚠ 含往返+单程混合数据</span>" if cov.get("trip_type_counts", {}).get("round_trip", 0) > 0 and cov.get("trip_type_counts", {}).get("one_way", 0) > 0 else ""}
     </div>
   </div>
 
@@ -491,6 +556,7 @@ def build_analysis_html(
   {content_html}
 
   {_warnings_section(cabins, currency)}
+  {_coverage_section(cov)}
   {reco_section}
   {METHODOLOGY_HTML}
 
