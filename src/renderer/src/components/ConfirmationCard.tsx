@@ -346,13 +346,22 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
   )
 
   // Single mode: date range
-  const [dateStart, setDateStart] = useState(intent.date_start || '')
-  const [dateEnd, setDateEnd]     = useState(intent.date_end || '')
+  // Fallback: if AI used specific_dates instead of date_start/date_end, use those
+  const [dateStart, setDateStart] = useState(
+    intent.date_start || intent.specific_dates?.[0] || ''
+  )
+  const [dateEnd, setDateEnd] = useState(
+    intent.date_end || intent.specific_dates?.[intent.specific_dates.length - 1] || ''
+  )
 
   const isRoundTrip = intent.trip_type === 'round_trip'
   const [returnDates, setReturnDates] = useState<string[]>(intent.return_dates || [])
-  const [returnDateStart, setReturnDateStart] = useState(intent.return_date_start || '')
-  const [returnDateEnd, setReturnDateEnd]     = useState(intent.return_date_end || '')
+  const [returnDateStart, setReturnDateStart] = useState(
+    intent.return_date_start || intent.return_dates?.[0] || ''
+  )
+  const [returnDateEnd, setReturnDateEnd] = useState(
+    intent.return_date_end || intent.return_dates?.[intent.return_dates.length - 1] || ''
+  )
 
   const [cabins, setCabins]     = useState<Record<string,boolean>>(
     Object.fromEntries(['Y','W','C','F'].map(c => [c, intent.cabins.includes(c)]))
@@ -391,6 +400,7 @@ export default function ConfirmationCard({ intent, onAdjust }: Props) {
             dateEnd,
             weekdayFilter: weekdays,
             cabin: selectedCabins[0] || 'Y',
+            cabins: selectedCabins,          // pass all selected cabins
             currency,
             tripType: isRoundTrip ? 'round_trip' : 'one_way',
             returnDateStart: isRoundTrip ? returnDateStart : '',

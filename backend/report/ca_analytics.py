@@ -132,17 +132,31 @@ def compute_ca_analytics(
         sep   = "⇄" if f.get("trip_type") == "round_trip" else "-"
         route = f"{f['origin']}{sep}{f['destination']}"
         type_label = f.get("type_display", "")
-        code  = f["airline_code"]
         price = f["price"]
         if price <= 0:
             continue
         # Prefer shorter/simpler name (avoids "Lufthansa, Air China" overwriting "Air China")
-        name = f.get("airline", code)
-        if code not in airline_names or len(name) < len(airline_names[code]):
-            airline_names[code] = name
+        mkt_code = f["airline_code"]
+        name = f.get("airline", mkt_code)
+        if mkt_code not in airline_names or len(name) < len(airline_names[mkt_code]):
+            airline_names[mkt_code] = name
+        # Also index individual operating carriers from segments
+        for seg in f.get("segments", []):
+            op_code = seg.get("operating_code") or seg.get("airline_code")
+            op_name = seg.get("airline", "")
+            if op_code and op_name:
+                if op_code not in airline_names or len(op_name) < len(airline_names[op_code]):
+                    airline_names[op_code] = op_name
+        # Codeshare: attribute price to marketing carrier + all operating carriers
+        all_codes: set = {mkt_code}
+        for seg in f.get("segments", []):
+            op = seg.get("operating_code") or seg.get("airline_code")
+            if op:
+                all_codes.add(op)
         cell = cells[cabin][route][type_label][period]
-        if code not in cell or price < cell[code]:
-            cell[code] = price
+        for code in all_codes:
+            if code not in cell or price < cell[code]:
+                cell[code] = price
 
     currency = flights[0]["currency"] if flights else "GBP"
 

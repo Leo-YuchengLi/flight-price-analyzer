@@ -138,6 +138,7 @@ interface SingleInit {
   dateEnd: string
   weekdayFilter: number[]
   cabin: string
+  cabins?: string[]   // multi-cabin from AI flow; takes priority over cabin
   currency: string
   tripType?: 'one_way' | 'round_trip'
   returnDateStart?: string
@@ -154,7 +155,13 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
     init?.returnDateStart || (init?.dateStart ? addDays(init.dateStart, 7) : '2026-06-14')
   )
   const [weekdays, setWeekdays]   = useState<number[]>(init?.weekdayFilter || [])
-  const [cabin, setCabin]         = useState(init?.cabin    || 'Y')
+  // Multi-cabin support: init?.cabins (AI flow) takes priority over init?.cabin
+  const [cabinMap, setCabinMap] = useState<Record<string, boolean>>(() => {
+    const active = init?.cabins?.length ? init.cabins : [init?.cabin || 'Y']
+    return { Y: active.includes('Y'), W: active.includes('W'), C: active.includes('C'), F: active.includes('F') }
+  })
+  const selectedCabins = Object.keys(cabinMap).filter(k => cabinMap[k])
+  const cabin = selectedCabins[0] || 'Y'   // keep for compat (report label, etc.)
   const [currency, setCurrency]   = useState(init?.currency || 'GBP')
   const [showBrowser, setShowBrowser] = useState(false)
   const [dryRun, setDryRun]       = useState(false)
@@ -214,64 +221,74 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
       if (!window.confirm('当前有任务正在执行，是否停止并开始新任务？')) return
       searchTaskStore.abort()
     }
+    const cabinsLabel = selectedCabins.map(c => CABIN_LABELS[c]).join('+')
     const label = tripType === 'round_trip'
-      ? `${origin}⇄${dest} 去程${dateStart} 返程${returnDate}`
-      : `${origin}→${dest} ${dateStart}~${dateEnd}`
+      ? `${origin}⇄${dest} 去程${dateStart} 返程${returnDate} ${cabinsLabel}`
+      : `${origin}→${dest} ${dateStart}~${dateEnd} ${cabinsLabel}`
     setSearching(true)
     setResultsByKey({})
     setDone(false)
     setReportId(null)
     const dates = tripType === 'round_trip' ? [dateStart] : filtDates
-    const initProgress = { msg: '准备中…', cur: 0, total: dates.length }
+    const totalSteps = dates.length * selectedCabins.length
+    const initProgress = { msg: '准备中…', cur: 0, total: totalSteps }
     setProgress(initProgress)
     abortRef.current = new AbortController()
     searchTaskStore.start(label, () => abortRef.current?.abort())
     searchTaskStore.updateProgress(initProgress)
 
     const localFlights: FlightResult[] = []
+    let stepsDone = 0
     try {
-      const body: Record<string, unknown> = {
-        origin, destination: dest, dates, cabin, currency,
-        trip_type: tripType,
-        weekday_filter: weekdays,
-        show_browser: showBrowser,
-        dry_run: dryRun,
-      }
-      if (tripType === 'round_trip') body.return_dates = [returnDate]
+      for (const activeCabin of selectedCabins) {
+        if (abortRef.current.signal.aborted) break
+        const body: Record<string, unknown> = {
+          origin, destination: dest, dates, cabin: activeCabin, currency,
+          trip_type: tripType,
+          weekday_filter: weekdays,
+          show_browser: showBrowser,
+          dry_run: dryRun,
+        }
+        if (tripType === 'round_trip') body.return_dates = [returnDate]
 
-      const res = await fetch(`${backendUrl}/api/search/classic`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: abortRef.current.signal,
-      })
-      const reader = res.body!.getReader()
-      const dec = new TextDecoder()
-      let buf = ''
-      while (true) {
-        const { done: d, value } = await reader.read()
-        if (d) break
-        buf += dec.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const evt: SSEEvent = JSON.parse(line.slice(6))
-            if (evt.type === 'progress') {
-              const p = { msg: evt.message!, cur: evt.current!, total: evt.total! }
-              setProgress(p)
-              searchTaskStore.updateProgress(p)
-            } else if (evt.type === 'result' && evt.flights) {
-              const key = evt.return_date ? `${evt.date}⇄${evt.return_date}` : evt.date!
-              setResultsByKey(p => ({ ...p, [key]: evt.flights! }))
-              localFlights.push(...evt.flights)
-              sharedFlights.push(...evt.flights)
-              searchTaskStore.updateFlightCount(localFlights.length)
-            } else if (evt.type === 'done') {
-              setDone(true)
-            }
-          } catch { /* ok */ }
+        const res = await fetch(`${backendUrl}/api/search/classic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: abortRef.current.signal,
+        })
+        const reader = res.body!.getReader()
+        const dec = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done: d, value } = await reader.read()
+          if (d) break
+          buf += dec.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const evt: SSEEvent = JSON.parse(line.slice(6))
+              if (evt.type === 'progress') {
+                stepsDone = (evt.current ?? 0) + dates.length * selectedCabins.indexOf(activeCabin)
+                const p = { msg: `[${CABIN_LABELS[activeCabin]}] ${evt.message!}`, cur: stepsDone, total: totalSteps }
+                setProgress(p)
+                searchTaskStore.updateProgress(p)
+              } else if (evt.type === 'result' && evt.flights) {
+                const key = `${activeCabin}:${evt.return_date ? `${evt.date}⇄${evt.return_date}` : evt.date!}`
+                setResultsByKey(p => ({ ...p, [key]: evt.flights! }))
+                localFlights.push(...evt.flights)
+                sharedFlights.push(...evt.flights)
+                searchTaskStore.updateFlightCount(localFlights.length)
+              } else if (evt.type === 'done') {
+                stepsDone = dates.length * (selectedCabins.indexOf(activeCabin) + 1)
+                const p = { msg: `[${CABIN_LABELS[activeCabin]}] 完成`, cur: stepsDone, total: totalSteps }
+                setProgress(p)
+                searchTaskStore.updateProgress(p)
+              }
+            } catch { /* ok */ }
+          }
         }
       }
     } catch (err: any) { if (err.name !== 'AbortError') console.error(err) }
@@ -288,7 +305,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
 
   async function autoSaveReport(flights: FlightResult[], label: string) {
     try {
-      const title = `${label} ${CABIN_LABELS[cabin]}`
+      const title = label  // label already includes cabin names
       const res = await fetch(`${backendUrl}/api/report/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -304,10 +321,11 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
     if (!allFlights.length) return
     setGenRep(true)
     try {
+      const cabinsLabel = selectedCabins.map(c => CABIN_LABELS[c]).join('+')
       const label = tripType === 'round_trip'
         ? `${origin}→${dest} 去程${dateStart} 返程${returnDate}`
         : `${origin}→${dest} ${dateStart}~${dateEnd}${weekdays.length ? ` 周${weekdays.map(w => WEEKDAY_LABELS[w]).join('/')}` : ''}`
-      const title = `${label} ${CABIN_LABELS[cabin]}`
+      const title = `${label} ${cabinsLabel}`
       const res = await fetch(`${backendUrl}/api/report/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -361,9 +379,18 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
               onChange={e => setDest(e.target.value.toUpperCase())} placeholder="BJS" />
           </Field>
           <Field label="舱位">
-            <select style={S.input} value={cabin} onChange={e => setCabin(e.target.value)}>
-              {Object.entries(CABIN_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 4 }}>
+              {Object.entries(CABIN_LABELS).map(([v, l]) => {
+                const active = cabinMap[v]
+                return (
+                  <button key={v} onClick={() => setCabinMap(prev => ({ ...prev, [v]: !prev[v] }))} style={{
+                    padding: '5px 12px', fontSize: 12, cursor: 'pointer', border: `1px solid ${active ? '#3b82f6' : '#334155'}`,
+                    borderRadius: 6, background: active ? 'linear-gradient(135deg,#2563eb,#4f46e5)' : '#0f172a',
+                    color: active ? '#fff' : '#64748b', fontWeight: active ? 600 : 400,
+                  }}>{l}</button>
+                )
+              })}
+            </div>
           </Field>
 
           {tripType === 'one_way' ? (
@@ -453,8 +480,8 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
         <div style={{ marginTop: 14 }}>
           {!searching
             ? <button style={S.btnPrimary} onClick={handleSearch}
-                disabled={tripType === 'one_way' ? filtDates.length === 0 : !dateStart}>
-                🔍 开始搜索 ({tripType === 'one_way' ? `${filtDates.length}天` : '1次往返'})
+                disabled={selectedCabins.length === 0 || (tripType === 'one_way' ? filtDates.length === 0 : !dateStart)}>
+                🔍 开始搜索 ({tripType === 'one_way' ? `${filtDates.length}天` : '1次往返'}{selectedCabins.length > 1 ? ` × ${selectedCabins.length}舱` : ''})
               </button>
             : <button style={{ ...S.btnPrimary, background: '#7f1d1d' }}
                 onClick={() => abortRef.current?.abort()}>
@@ -478,15 +505,19 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
       )}
 
       {Object.entries(resultsByKey).sort().map(([key, flights]) => {
-        const isRoundTrip = key.includes('⇄')
-        const dateLabel = isRoundTrip ? key.replace('⇄', ' ⇄ 返程 ') : key
+        // key format: "CABIN:DATE" or "CABIN:DEP⇄RET"
+        const colonIdx = key.indexOf(':')
+        const cabinCode = colonIdx >= 0 ? key.slice(0, colonIdx) : ''
+        const dateKey = colonIdx >= 0 ? key.slice(colonIdx + 1) : key
+        const isRoundTrip = dateKey.includes('⇄')
         return (
           <div key={key} style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontWeight: 600, color: '#e2e8f0' }}>
+                {cabinCode && <span style={{ marginRight: 8, fontSize: 11, color: '#a78bfa', background: '#1e1b4b', padding: '1px 7px', borderRadius: 10 }}>{CABIN_LABELS[cabinCode] || cabinCode}</span>}
                 {isRoundTrip
-                  ? <>去程 {key.split('⇄')[0]} <span style={{ color: '#60a5fa' }}>⇄</span> 返程 {key.split('⇄')[1]}</>
-                  : dateLabel}
+                  ? <>去程 {dateKey.split('⇄')[0]} <span style={{ color: '#60a5fa' }}>⇄</span> 返程 {dateKey.split('⇄')[1]}</>
+                  : dateKey}
                 {isRoundTrip && <span style={{ marginLeft: 8, fontSize: 11, color: '#60a5fa', background: '#172554', padding: '1px 7px', borderRadius: 10 }}>往返总价</span>}
               </span>
               <span style={{ fontSize: 12, color: '#475569' }}>{flights.length} 个航班</span>

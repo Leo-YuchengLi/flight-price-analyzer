@@ -120,9 +120,26 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
                 # Flight-level airline = all distinct operating carriers joined
                 #   → produces "Lufthansa, Air China" when segments differ
                 op_code      = fi.get("airlineCode", "")
-                mkt_code     = fi.get("actualAirlineCode") or op_code
+                mkt_code     = fi.get("actualAirlineCode") or ""
                 share_fno    = fi.get("shareFlightNo") or ""
                 flight_no    = share_fno or fi.get("flightNo", "")
+
+                # Fallback 1: extract marketing code from shareFlightNo (e.g. "CA855" → "CA")
+                # This handles codeshares where actualAirlineCode is missing in SSE
+                if not mkt_code and share_fno:
+                    prefix = "".join(c for c in share_fno[:3] if c.isalpha()).upper()
+                    if prefix:
+                        mkt_code = prefix
+                        logger.info("Codeshare fix: inferred mkt_code=%s from shareFlightNo=%s (op=%s)",
+                                    mkt_code, share_fno, op_code)
+
+                # Fallback 2: if still empty, fall back to operating code
+                if not mkt_code:
+                    mkt_code = op_code
+
+                if op_code and mkt_code and op_code != mkt_code:
+                    logger.info("Codeshare seg: op=%s mkt=%s opFno=%s shareFno=%s",
+                                op_code, mkt_code, fi.get("flightNo", ""), share_fno)
 
                 segs.append({
                     "airline":          airline_map.get(op_code, op_code),  # operating name for display
@@ -181,9 +198,15 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
                     dep_dt = s.get("departDateTime", "")
                     arr_dt = s.get("arriveDateTime", "")
                     op_code      = fi.get("airlineCode", "")
-                    mkt_code     = fi.get("actualAirlineCode") or op_code
+                    mkt_code     = fi.get("actualAirlineCode") or ""
                     share_fno    = fi.get("shareFlightNo") or ""
                     flight_no    = share_fno or fi.get("flightNo", "")
+                    if not mkt_code and share_fno:
+                        prefix = "".join(c for c in share_fno[:3] if c.isalpha()).upper()
+                        if prefix:
+                            mkt_code = prefix
+                    if not mkt_code:
+                        mkt_code = op_code
                     ret_segs.append({
                         "airline":        airline_map.get(op_code, op_code),  # operating name
                         "airline_code":   mkt_code,   # marketing code for column assignment
@@ -372,6 +395,9 @@ class TripScraper:
             on_progress(f"Scraping {origin}{arrow}{destination} {date}…")
 
         cabin_map = {"Y": "y", "W": "w", "C": "c", "F": "f"}
+        # Pass the code as-is to Trip.com:
+        # - City code (LON, BJS) → covers all airports in that city
+        # - Airport code (LHR, PEK) → covers only that specific airport
         if is_round_trip:
             search_url = (
                 f"https://hk.trip.com/flights/showfarefirst"

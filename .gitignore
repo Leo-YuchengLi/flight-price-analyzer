@@ -6,8 +6,8 @@ build/
 
 # Python
 backend/.env
-backend/__pycache__/
-backend/*.pyc
+**/__pycache__/
+**/*.pyc
 backend/.venv/
 backend/venv/
 *.egg-info/

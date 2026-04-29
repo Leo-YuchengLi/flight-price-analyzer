@@ -280,22 +280,38 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
     dates = sorted(set(_date_key(f) for f in flights))
 
     # Build airline code → display name mapping (prefer shorter/simpler names)
+    # Also map individual operating carrier codes from segment data
     airline_names: dict[str, str] = {}
     for f in flights:
         code, name = f["airline_code"], f["airline"]
         if code not in airline_names or len(name) < len(airline_names[code]):
             airline_names[code] = name
+        # Index individual operating carriers from segments
+        for seg in f.get("segments", []):
+            op_code = seg.get("operating_code") or seg.get("airline_code")
+            op_name = seg.get("airline", "")
+            if op_code and op_name:
+                if op_code not in airline_names or len(op_name) < len(airline_names[op_code]):
+                    airline_names[op_code] = op_name
 
     # ── Per-cell minimums: (route, cabin, type_label, date_key) → {code: min_price}
+    # Codeshare: also attribute price to each operating carrier in the segments
     cell_prices: dict[tuple, dict[str, float]] = defaultdict(dict)
     for f in flights:
         if f["price"] <= 0:
             continue
         route = _route_key(f)
         key   = (route, f["cabin"], f["type_display"], _date_key(f))
-        code  = f["airline_code"]
-        if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
-            cell_prices[key][code] = f["price"]
+        # Collect all codes this flight should be attributed to:
+        # marketing carrier + all operating carriers from segments
+        all_codes: set[str] = {f["airline_code"]}
+        for seg in f.get("segments", []):
+            op = seg.get("operating_code") or seg.get("airline_code")
+            if op:
+                all_codes.add(op)
+        for code in all_codes:
+            if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
+                cell_prices[key][code] = f["price"]
 
     # ── Collect (type_label, route, cabin) tuples in display order ────────────
     TYPE_ORDER = {"DIRECT": 0, "ID": 1, "II": 2}
@@ -389,10 +405,16 @@ def build_excel_data(flights: list[dict]) -> dict[str, Any]:
                 "all_prices": [],
             }
         row = detail_keys[key]
-        code = f["airline_code"]
-        cur  = row["prices"][code]
-        if cur is None or f["price"] < cur:
-            row["prices"][code] = f["price"]
+        # Codeshare: attribute to marketing carrier + all operating carriers
+        all_codes_d: set[str] = {f["airline_code"]}
+        for seg in f.get("segments", []):
+            op = seg.get("operating_code") or seg.get("airline_code")
+            if op:
+                all_codes_d.add(op)
+        for code in all_codes_d:
+            cur = row["prices"][code]
+            if cur is None or f["price"] < cur:
+                row["prices"][code] = f["price"]
         row["all_prices"].append(f["price"])
 
     detail_rows = []
@@ -519,13 +541,21 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
     date_labels = {pk: _period_header(pk) for pk in period_keys}
 
     # Build airline code → display name (prefer shorter/simpler names)
+    # Also map individual operating carrier codes from segment data
     airline_names: dict[str, str] = {}
     for f in flights:
         code, name = f["airline_code"], f["airline"]
         if code not in airline_names or len(name) < len(airline_names[code]):
             airline_names[code] = name
+        for seg in f.get("segments", []):
+            op_code = seg.get("operating_code") or seg.get("airline_code")
+            op_name = seg.get("airline", "")
+            if op_code and op_name:
+                if op_code not in airline_names or len(op_name) < len(airline_names[op_code]):
+                    airline_names[op_code] = op_name
 
     # cell_prices: (route, cabin, type_label, period_key) → {code: min_price}
+    # Codeshare: attribute price to marketing carrier + all operating carriers
     cell_prices: dict[tuple, dict[str, float]] = defaultdict(dict)
     for f in flights:
         if f["price"] <= 0:
@@ -535,9 +565,14 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
             continue
         route = _route_key(f)
         key   = (route, f["cabin"], f["type_display"], pk)
-        code  = f["airline_code"]
-        if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
-            cell_prices[key][code] = f["price"]
+        all_codes: set[str] = {f["airline_code"]}
+        for seg in f.get("segments", []):
+            op = seg.get("operating_code") or seg.get("airline_code")
+            if op:
+                all_codes.add(op)
+        for code in all_codes:
+            if code not in cell_prices[key] or f["price"] < cell_prices[key][code]:
+                cell_prices[key][code] = f["price"]
 
     TYPE_ORDER  = {"DIRECT": 0, "ID": 1, "DD": 2, "II": 3}
     CABIN_ORDER = {"Y": 0, "W": 1, "C": 2, "F": 3}
@@ -626,10 +661,16 @@ def build_period_excel_data(flights: list[dict], date_ranges: list[dict]) -> dic
                 "all_prices": [],
             }
         row = detail_keys[key]
-        code = f["airline_code"]
-        cur  = row["prices"][code]
-        if cur is None or f["price"] < cur:
-            row["prices"][code] = f["price"]
+        # Codeshare: attribute to marketing carrier + all operating carriers
+        all_codes_d: set[str] = {f["airline_code"]}
+        for seg in f.get("segments", []):
+            op = seg.get("operating_code") or seg.get("airline_code")
+            if op:
+                all_codes_d.add(op)
+        for code in all_codes_d:
+            cur = row["prices"][code]
+            if cur is None or f["price"] < cur:
+                row["prices"][code] = f["price"]
         row["all_prices"].append(f["price"])
 
     detail_rows = []
