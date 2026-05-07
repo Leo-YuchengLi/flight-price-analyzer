@@ -1,6 +1,6 @@
 {
   "name": "flight-price-analyzer",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "AI-powered flight price analysis desktop app",
   "main": "./out/main/index.js",
   "scripts": {

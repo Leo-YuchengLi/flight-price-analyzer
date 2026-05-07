@@ -25,8 +25,8 @@ function expandEntries(entries: DateEntry[]): string[] {
     if (e.type === 'single') {
       out.add(e.date)
     } else {
-      const cur = new Date(e.start + 'T00:00:00')
-      const last = new Date(e.end + 'T00:00:00')
+      const cur = new Date(e.start)
+      const last = new Date(e.end)
       let guard = 0
       while (cur <= last && guard++ < 180) {
         out.add(cur.toISOString().split('T')[0])
@@ -173,6 +173,7 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   const [genRep, setGenRep]         = useState(false)
   const [reportId, setReportId]     = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const isFirstRender = useRef(true)
   const task = useSearchTask()
 
   // On mount: sync local UI to store if a task is already running
@@ -197,7 +198,12 @@ function SingleSearch({ backendUrl, init }: { backendUrl: string; init?: SingleI
   }, [task])
 
   // Update return date when departure date changes (+7 days default)
+  // Skip first render to preserve explicit returnDate passed from AI flow
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false
+      return
+    }
     if (tripType === 'round_trip') {
       setReturnDate(addDays(dateStart, 7))
     }
@@ -1195,8 +1201,8 @@ interface SearchTask {
 
 function expandRange(start: string, end: string): string[] {
   const out: string[] = []
-  const cur = new Date(start + 'T00:00:00')
-  const last = new Date(end + 'T00:00:00')
+  const cur = new Date(start)
+  const last = new Date(end)
   while (cur <= last && out.length < 60) {
     out.push(cur.toISOString().split('T')[0])
     cur.setDate(cur.getDate() + 1)
