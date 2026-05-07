@@ -39,7 +39,7 @@ interface Props {
 }
 
 const CABIN_LABEL: Record<string, string> = { Y: '经济舱', W: '超级经济舱', C: '商务舱', F: '头等舱' }
-const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY']
+const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY', 'SEK']
 const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
 function dateRange(start: string | null, end: string | null, weekdayFilter: number[] = []): string[] {

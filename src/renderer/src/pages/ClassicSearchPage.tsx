@@ -67,7 +67,7 @@ interface SSEEvent {
 interface ODPair { id: string; origin: string; destination: string }
 
 const CABIN_LABELS: Record<string, string> = { Y: '经济舱', W: '超级经济舱', C: '商务舱', F: '头等舱' }
-const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY']
+const CURRENCY_LIST = ['HKD', 'USD', 'EUR', 'GBP', 'CNY', 'SEK']
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
 function uid() { return Math.random().toString(36).slice(2) }

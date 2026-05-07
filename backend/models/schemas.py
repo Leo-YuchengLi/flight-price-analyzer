@@ -12,7 +12,7 @@ class ClassicSearchRequest(BaseModel):
     destination: str = Field(..., description="IATA city/airport code, e.g. BJS")
     dates: list[str] = Field(..., description="ISO date strings, e.g. ['2026-06-01']")
     cabin: Literal["Y", "W", "C", "F"] = "Y"
-    currency: Literal["EUR", "USD", "CNY", "GBP", "HKD"] = "EUR"
+    currency: Literal["EUR", "USD", "CNY", "GBP", "HKD", "SEK"] = "EUR"
     trip_type: Literal["one_way", "round_trip"] = "one_way"
     return_dates: list[str] = Field(default_factory=list, description="For round_trip: return leg dates")
     weekday_filter: list[int] = Field(default_factory=list,

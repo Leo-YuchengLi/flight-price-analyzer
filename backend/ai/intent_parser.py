@@ -103,7 +103,7 @@ class SearchIntent(BaseModel):
         description="For round_trip single-mode drill-down: end of return date range.")
 
     cabins: list[Literal["Y", "W", "C", "F"]] = Field(default_factory=lambda: ["Y", "C"])
-    currency: Literal["EUR", "GBP", "USD", "CNY", "HKD"] = "GBP"
+    currency: Literal["EUR", "GBP", "USD", "CNY", "HKD", "SEK"] = "GBP"
     ready_to_search: bool = Field(False,
         description="True when origins + destinations + (specific_dates OR date_ranges OR date_start) are all set")
 
