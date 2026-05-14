@@ -1,5 +1,5 @@
 """
-Flight scraper — uses a real browser to navigate hk.trip.com's showfarefirst URL
+Flight scraper — uses a real browser to navigate uk.trip.com's showfarefirst URL
 and captures the complete FlightListSearchSSE response body.
 
 Why browser instead of raw httpx:
@@ -263,7 +263,7 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
                 "return_airline": ret_main_name,
                 "return_airline_code": ret_main_code,
                 "return_duration": ret_duration,
-                "scraped_at": datetime.now().isoformat(), "source_url": "hk.trip.com",
+                "scraped_at": datetime.now().isoformat(), "source_url": "uk.trip.com",
             })
 
     return sorted(flights, key=lambda f: f["price"])
@@ -273,10 +273,10 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
 
 class TripScraper:
     """
-    Browser-based scraper for hk.trip.com.
+    Browser-based scraper for uk.trip.com.
 
     Strategy:
-      1. start()  — launch Chromium, load hk.trip.com homepage (establishes session).
+      1. start()  — launch Chromium, load uk.trip.com homepage (establishes session).
       2. scrape_one() — navigate to showfarefirst URL, intercept the full
                         FlightListSearchSSE response body (400-500 KB, ~90+ flights).
       3. Parse SSE body with _parse_sse_events().
@@ -314,16 +314,16 @@ class TripScraper:
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1400, "height": 900},
-            locale="en-HK",
-            timezone_id="Asia/Hong_Kong",
-            extra_http_headers={"Accept-Language": "en-HK,en-GB;q=0.9,en;q=0.8"},
+            locale="en-GB",
+            timezone_id="Europe/London",
+            extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
         )
 
         # Warm-up: load homepage to establish session cookies
         page = await self._context.new_page()
         if HAS_STEALTH:
             await stealth_async(page)
-        await page.goto("https://hk.trip.com/", wait_until="domcontentloaded", timeout=25000)
+        await page.goto("https://uk.trip.com/", wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(2.5)
         await page.close()
         logger.info("TripScraper ready")
@@ -358,15 +358,15 @@ class TripScraper:
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1400, "height": 900},
-            locale="en-HK",
-            timezone_id="Asia/Hong_Kong",
-            extra_http_headers={"Accept-Language": "en-HK,en-GB;q=0.9,en;q=0.8"},
+            locale="en-GB",
+            timezone_id="Europe/London",
+            extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
         )
         # Brief warm-up
         page = await self._context.new_page()
         if HAS_STEALTH:
             await stealth_async(page)
-        await page.goto("https://hk.trip.com/", wait_until="domcontentloaded", timeout=25000)
+        await page.goto("https://uk.trip.com/", wait_until="domcontentloaded", timeout=25000)
         await asyncio.sleep(2.0)
         await page.close()
         logger.info("TripScraper: context refreshed")
@@ -400,18 +400,18 @@ class TripScraper:
         # - Airport code (LHR, PEK) → covers only that specific airport
         if is_round_trip:
             search_url = (
-                f"https://hk.trip.com/flights/showfarefirst"
+                f"https://uk.trip.com/flights/showfarefirst"
                 f"?dcity={origin.lower()}&acity={destination.lower()}"
                 f"&ddate={date}&rdate={return_date}"
                 f"&triptype=rt&class={cabin_map.get(cabin, 'y')}&quantity=1"
-                f"&nonstoponly=off&locale=en-HK&curr={currency}"
+                f"&nonstoponly=off&locale=en-GB&curr={currency}"
             )
         else:
             search_url = (
-                f"https://hk.trip.com/flights/showfarefirst"
+                f"https://uk.trip.com/flights/showfarefirst"
                 f"?dcity={origin.lower()}&acity={destination.lower()}&ddate={date}"
                 f"&triptype=ow&class={cabin_map.get(cabin, 'y')}&quantity=1"
-                f"&nonstoponly=off&locale=en-HK&curr={currency}"
+                f"&nonstoponly=off&locale=en-GB&curr={currency}"
             )
 
         # Limit concurrent pages to 2 while allowing parallel route searches.

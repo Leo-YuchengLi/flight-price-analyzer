@@ -1078,7 +1078,7 @@ function BatchSearch({ backendUrl, init }: { backendUrl: string; init?: BatchIni
             <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{totalQ}</span>
             <span style={{ color: '#475569' }}> 次查询</span>
             <span style={{ color: '#334155', marginLeft: 12, fontSize: 12 }}>
-              约 {Math.ceil(totalQ * 0.3)}–{Math.ceil(totalQ * 0.5)} 分钟
+              约 {Math.ceil(totalQ * 0.15)}–{Math.ceil(totalQ * 0.2)} 分钟
             </span>
           </div>
           {totalQ > 50 && (
@@ -1447,7 +1447,7 @@ function TaskGroupsSearch({ backendUrl, init }: { backendUrl: string; init: Task
           <div style={{ fontSize: 12, color: '#64748b' }}>
             {tasks.length} 条搜索任务 · {init.groups.length} 个舱位组 ·
             <span style={{ color: '#60a5fa' }}> {PARALLEL_ROUTES}条并行</span> ·
-            约 {Math.ceil(tasks.length * 0.5 / PARALLEL_ROUTES)}–{Math.ceil(tasks.length * 0.75 / PARALLEL_ROUTES)} 分钟 ·
+            约 {Math.ceil(tasks.length * 0.3 / PARALLEL_ROUTES)}–{Math.ceil(tasks.length * 0.4 / PARALLEL_ROUTES)} 分钟 ·
             每完成1条自动存档 · ID: <code style={{ color: '#475569', fontSize: 11 }}>{checkpointId.slice(0, 12)}</code>
           </div>
         </div>

@@ -41,9 +41,10 @@ export async function startPythonBackend(geminiApiKey = ''): Promise<string> {
   const args = app.isPackaged ? [] : [join(__dirname, '../../backend/main.py')]
 
   // Playwright browsers path: bundled inside app resources (no system Chrome needed)
+  // In dev mode, use the system playwright cache so headless_shell issues don't block testing
   const playwrightBrowsersPath = app.isPackaged
     ? join(process.resourcesPath, 'pw-browsers')
-    : join(__dirname, '../../resources/pw-browsers')
+    : join(require('os').homedir(), '.cache', 'ms-playwright')
 
   console.log(`[Bridge] Starting Python: ${pythonExe} ${args.join(' ')} PORT=${port}`)
   console.log(`[Bridge] Playwright browsers: ${playwrightBrowsersPath}`)
@@ -56,6 +57,10 @@ export async function startPythonBackend(geminiApiKey = ''): Promise<string> {
       PLAYWRIGHT_BROWSERS_PATH: playwrightBrowsersPath,
       // Forward stored API key so backend can use it without needing .env
       ...(geminiApiKey ? { GEMINI_API_KEY: geminiApiKey } : {}),
+      // Isolate from conda: prevent conda's native .so files from polluting the venv
+      CONDA_PREFIX: '',
+      CONDA_DEFAULT_ENV: '',
+      PYTHONNOUSERSITE: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

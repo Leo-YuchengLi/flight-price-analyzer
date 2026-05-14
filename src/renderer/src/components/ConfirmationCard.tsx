@@ -292,7 +292,7 @@ function TaskGroupsCard({ intent, onAdjust }: Props) {
       <div style={S.summary}>
         已选 {selectedGroups.length}/{groups.length} 组 ·
         <strong style={{ color: '#60a5fa', margin: '0 4px' }}>{totalTasks}</strong>次查询 ·
-        预计 <strong style={{ color: '#f59e0b' }}>{Math.ceil(totalTasks * 0.5)}–{Math.ceil(totalTasks * 0.75)}</strong> 分钟
+        预计 <strong style={{ color: '#f59e0b' }}>{Math.ceil(totalTasks * 0.15)}–{Math.ceil(totalTasks * 0.2)}</strong> 分钟
         {datesMode === 'all' && totalTasks > 200 && (
           <span style={{ color: '#f59e0b', marginLeft: 6 }}>⚠ 逐日模式任务较多，建议确保网络稳定</span>
         )}
