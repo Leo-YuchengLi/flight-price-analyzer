@@ -22,16 +22,25 @@ function findPython(): string {
     const ext = process.platform === 'win32' ? '.exe' : ''
     return join(process.resourcesPath, 'backend', `backend${ext}`)
   }
-  // In dev, prefer the venv if it exists, fall back to system python
-  const venvPython = process.platform === 'win32'
-    ? join(__dirname, '../../backend/.venv/Scripts/python.exe')
-    : join(__dirname, '../../backend/.venv/bin/python3')
-  try {
-    require('fs').accessSync(venvPython)
-    return venvPython
-  } catch {
-    return process.platform === 'win32' ? 'python' : 'python3'
+  // In dev, prefer the venv if it exists, fall back to system python.
+  // Try .venv.nosync first (iCloud-safe), then .venv as fallback.
+  const fs = require('fs')
+  const candidates = process.platform === 'win32'
+    ? [
+        join(__dirname, '../../backend/.venv.nosync/Scripts/python.exe'),
+        join(__dirname, '../../backend/.venv/Scripts/python.exe'),
+      ]
+    : [
+        join(__dirname, '../../backend/.venv.nosync/bin/python3'),
+        join(__dirname, '../../backend/.venv/bin/python3'),
+      ]
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate)
+      return candidate
+    } catch {}
   }
+  return process.platform === 'win32' ? 'python' : 'python3'
 }
 
 export async function startPythonBackend(geminiApiKey = ''): Promise<string> {
@@ -67,7 +76,7 @@ export async function startPythonBackend(geminiApiKey = ''): Promise<string> {
 
   pythonProcess.stderr?.on('data', (data: Buffer) => {
     // uvicorn logs go to stderr — useful for debugging
-    process.stderr.write(`[Python] ${data}`)
+    try { process.stderr.write(`[Python] ${data}`) } catch {}
   })
 
   return new Promise((resolve, reject) => {
@@ -77,7 +86,7 @@ export async function startPythonBackend(geminiApiKey = ''): Promise<string> {
 
     pythonProcess!.stdout?.on('data', (data: Buffer) => {
       const text = data.toString()
-      process.stdout.write(`[Python] ${text}`)
+      try { process.stdout.write(`[Python] ${text}`) } catch {}
       if (text.includes(`PORT=${port}`)) {
         clearTimeout(timeout)
         resolve(`http://127.0.0.1:${port}`)

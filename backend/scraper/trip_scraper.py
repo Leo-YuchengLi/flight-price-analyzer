@@ -160,9 +160,12 @@ def _parse_sse_events(body: str, origin: str, dest: str, date: str,
             adult = price_obj.get("adult") or {}
             # adult.totalPrice = salePrice + tax = the blue "you pay" price shown on Trip.com
             # We always use the discounted total (incl. taxes), NOT the strikethrough original
+            # price_obj.totalPrice = rounded display price shown on Trip.com website
+            # adult.totalPrice     = precise per-adult total (may have decimals → rounds down)
+            # Always prefer objTotal (the website-visible price) to avoid £1 discrepancies
             price = float(
-                adult.get("totalPrice")
-                or price_obj.get("totalPrice")
+                price_obj.get("totalPrice")
+                or adult.get("totalPrice")
                 or adult.get("salePrice")
                 or 0
             )

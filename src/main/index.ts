@@ -5,6 +5,10 @@ import { startPythonBackend, stopPythonBackend } from './pythonBridge'
 // @ts-ignore — electron-store is CJS
 import Store from 'electron-store'
 
+// Suppress EPIPE errors when dev-server pipes close unexpectedly
+process.stdout.on('error', () => {})
+process.stderr.on('error', () => {})
+
 const store = new Store()
 let backendUrl: string | null = null
 
